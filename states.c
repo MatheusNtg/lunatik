@@ -25,30 +25,11 @@
 
 #include <lualib.h>
 
-#include "luautil.h"
-#include "xt_lua.h"
 #include "states.h"
-#include "netlink.h"
-#include "kpi_compat.h"
 
 #ifndef NFLUA_SETPAUSE
 #define NFLUA_SETPAUSE	100
 #endif /* NFLUA_SETPAUSE */
-
-extern int luaopen_memory(lua_State *);
-extern int luaopen_conn(lua_State *);
-extern int luaopen_netlink(lua_State *);
-extern int luaopen_packet(lua_State *);
-extern int luaopen_timer(lua_State *);
-
-static const luaL_Reg libs[] = {
-	{"memory", luaopen_memory},
-	{"conn", luaopen_conn},
-	{"netlink", luaopen_netlink},
-	{"packet", luaopen_packet},
-	{"timer", luaopen_timer},
-	{NULL, NULL}
-};
 
 static inline int name_hash(void *salt, const char *name)
 {
@@ -70,7 +51,7 @@ static bool refcount_dec_and_lock_bh(kpi_refcount_t *r, spinlock_t *lock)
 	return true;
 }
 
-struct nflua_state *nflua_state_lookup(struct xt_lua_net *xt_lua,
+struct nflua_state *klua_state_lookup(struct xt_lua_net *xt_lua,
 		const char *name)
 {
 	struct hlist_head *head;
@@ -147,7 +128,7 @@ static int state_init(struct nflua_state *s)
 	return 0;
 }
 
-struct nflua_state *nflua_state_create(struct xt_lua_net *xt_lua,
+struct nflua_state *klua_state_create(struct xt_lua_net *xt_lua,
 	size_t maxalloc, const char *name)
 {
 	struct hlist_head *head;
@@ -204,7 +185,7 @@ struct nflua_state *nflua_state_create(struct xt_lua_net *xt_lua,
 	return s;
 }
 
-int nflua_state_destroy(struct xt_lua_net *xt_lua, const char *name)
+int klua_state_destroy(struct xt_lua_net *xt_lua, const char *name)
 {
 	struct nflua_state *s = nflua_state_lookup(xt_lua, name);
 
@@ -218,7 +199,7 @@ int nflua_state_destroy(struct xt_lua_net *xt_lua, const char *name)
 	return 0;
 }
 
-int nflua_state_list(struct xt_lua_net *xt_lua, nflua_state_cb cb,
+int klua_state_list(struct xt_lua_net *xt_lua, nflua_state_cb cb,
 	unsigned short *total)
 {
 	struct hlist_head *head;
@@ -242,7 +223,7 @@ out:
 	return ret;
 }
 
-void nflua_state_destroy_all(struct xt_lua_net *xt_lua)
+void klua_state_destroy_all(struct xt_lua_net *xt_lua)
 {
 	struct hlist_head *head;
 	struct hlist_node *tmp;
@@ -259,12 +240,12 @@ void nflua_state_destroy_all(struct xt_lua_net *xt_lua)
 	spin_unlock_bh(&xt_lua->state_lock);
 }
 
-bool nflua_state_get(struct nflua_state *s)
+bool klua_state_get(struct nflua_state *s)
 {
 	return kpi_refcount_inc_not_zero(&s->users);
 }
 
-void nflua_state_put(struct nflua_state *s)
+void klua_state_put(struct nflua_state *s)
 {
 	struct xt_lua_net *xt_lua;
 
@@ -278,7 +259,7 @@ void nflua_state_put(struct nflua_state *s)
 	}
 }
 
-void nflua_states_init(struct xt_lua_net *xt_lua)
+void klua_states_init(struct xt_lua_net *xt_lua)
 {
 	int i;
 	atomic_set(&xt_lua->state_count, 0);
@@ -288,7 +269,7 @@ void nflua_states_init(struct xt_lua_net *xt_lua)
 		INIT_HLIST_HEAD(&xt_lua->state_table[i]);
 }
 
-void nflua_states_exit(struct xt_lua_net *xt_lua)
+void klua_states_exit(struct xt_lua_net *xt_lua)
 {
 	nflua_state_destroy_all(xt_lua);
 }
