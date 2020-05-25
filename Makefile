@@ -39,3 +39,14 @@ lunatik-objs += lua/lapi.o lua/lcode.o lua/lctype.o lua/ldebug.o lua/ldo.o \
 ifeq ($(shell [ "${VERSION}" -lt "4" ] && [ "${VERSION}${PATCHLEVEL}" -lt "312" ] && echo y),y)
 	lunatik-objs += util/div64.o
 endif
+
+lunatik-objs += states.o
+
+K_SRC = $(shell uname -r)
+
+all:
+	$(MAKE) -C /lib/modules/$(K_SRC)/build M=$$PWD modules \
+	CONFIG_LUNATIK=m CONFIG_MY_MOD=m
+
+clean:
+	$(MAKE) -C /lib/modules/$(K_SRC)/build M=$$PWD clean
