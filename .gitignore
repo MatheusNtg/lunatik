@@ -4,6 +4,7 @@ modules.builtin
 modules.order
 .ko.cmd
 .tmp_versions/
+tests/
 Module.symvers
 *.ko
 *.mod.c

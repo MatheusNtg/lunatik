@@ -164,6 +164,12 @@ EXPORT_SYMBOL(luaopen_os);
 EXPORT_SYMBOL(luaopen_string);
 EXPORT_SYMBOL(luaopen_table);
 EXPORT_SYMBOL(luaopen_utf8);
+EXPORT_SYMBOL(klua_state_create)
+EXPORT_SYMBOL(klua_state_destroy)
+EXPORT_SYMBOL(klua_state_destroy_all)
+EXPORT_SYMBOL(klua_states_init)
+EXPORT_SYMBOL(klua_states_exit)
+
 
 static int __init modinit(void)
 {
