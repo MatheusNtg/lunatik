@@ -23,6 +23,21 @@
 #include <lua.h>
 
 #define KLUA_NAME_MAXSIZE 64
+#define KLUA_MIN_ALLOC_BYTES (32 * 1024UL)
+
+
+#define PASS
+
+/*
+KLUA_MAX_STATES_COUNT represents the total amount of states that can be created by lunatik
+to obtain the total you need to calculate total = 2 ^ n where n is the value of 
+KLUA_MAX_STATES_COUNT
+*/
+#define KLUA_MAX_STATES_COUNT 2
+
+#define luaU_setenv(L, env, st) { \
+	st **penv = (st **)lua_getextraspace(L); \
+	*penv = env; }
 
 struct klua_state {
 	struct hlist_node node;
@@ -32,28 +47,30 @@ struct klua_state {
 	u32 dseqnum;
 	size_t maxalloc;
 	size_t curralloc;
-	unsigned char name[NFLUA_NAME_MAXSIZE];
+	unsigned char name[KLUA_NAME_MAXSIZE];
 };
 
-typedef int (*nflua_state_cb)(struct nflua_state *s, unsigned short *total);
+#ifndef PASS
+typedef int (*klua_state_cb)(struct klua_state *s, unsigned short *total);
+#endif
 
-struct nflua_state *klua_state_create(struct xt_lua_net *xt_lua,
-        size_t maxalloc, const char *name);
+struct klua_state *klua_state_create(size_t maxalloc, const char *name);
 
-int klua_state_destroy(struct xt_lua_net *xt_lua, const char *name);
+int klua_state_destroy(const char *name);
 
-struct nflua_state *klua_state_lookup(struct xt_lua_net *xt_lua,
-        const char *name);
+struct klua_state *klua_state_lookup(const char *name);
 
-int klua_state_list(struct xt_lua_net *xt_lua, nflua_state_cb cb,
+#ifndef PASS
+int klua_state_list(struct xt_lua_net *xt_lua, klua_state_cb cb,
 	unsigned short *total);
+#endif
 
-void klua_state_destroy_all(struct xt_lua_net *xt_lua);
+void klua_state_destroy_all(void);
 
-bool klua_state_get(struct nflua_state *s);
-void klua_state_put(struct nflua_state *s);
+bool klua_state_get(struct klua_state *s);
+void klua_state_put(struct klua_state *s);
 
-void klua_states_init(struct xt_lua_net *xt_lua);
-void klua_states_exit(struct xt_lua_net *xt_lua);
+void klua_states_init(void);
+void klua_states_exit(void);
 
-#endif /* NFLUA_STATES_H */
+#endif /* klua_stateS_H */

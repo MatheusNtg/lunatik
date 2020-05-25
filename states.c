@@ -22,28 +22,39 @@
 #include <linux/spinlock.h>
 #include <linux/idr.h>
 #include <linux/ratelimit.h>
+#include <linux/hashtable.h>
 
 #include <lualib.h>
 
 #include "states.h"
 
-#ifndef NFLUA_SETPAUSE
-#define NFLUA_SETPAUSE	100
-#endif /* NFLUA_SETPAUSE */
+#ifndef KLUA_SETPAUSE
+#define KLUA_SETPAUSE	100
+#endif /* KLUA_SETPAUSE */
 
-static inline int name_hash(void *salt, const char *name)
+
+DEFINE_READ_MOSTLY_HASHTABLE(states_table, KLUA_MAX_STATES_COUNT);
+spinlock_t gstorage_lock; // This is the locked used to lock operations on the global hash table
+atomic_t states_count;
+
+static int name_hash(const char *name)
 {
-	int len = strnlen(name, NFLUA_NAME_MAXSIZE);
-	return kpi_full_name_hash(salt, name, len) & (XT_LUA_HASH_BUCKETS - 1);
+	int key = 0;
+    char temp;
+    while((temp = *name++)){
+        key += temp;
+    }
+
+    return key;
 }
 
-static bool refcount_dec_and_lock_bh(kpi_refcount_t *r, spinlock_t *lock)
+static bool refcount_dec_and_lock_bh(refcount_t *r, spinlock_t *lock)
 {
-	if (kpi_refcount_dec_not_one(r))
+	if (refcount_dec_not_one(r))
 		return false;
 
 	spin_lock_bh(lock);
-	if (!kpi_refcount_dec_and_test(r)) {
+	if (!refcount_dec_and_test(r)) {
 		spin_unlock_bh(lock);
 		return false;
 	}
@@ -51,27 +62,24 @@ static bool refcount_dec_and_lock_bh(kpi_refcount_t *r, spinlock_t *lock)
 	return true;
 }
 
-struct nflua_state *klua_state_lookup(struct xt_lua_net *xt_lua,
-		const char *name)
+struct klua_state *klua_state_lookup(const char *name)
 {
-	struct hlist_head *head;
-	struct nflua_state *state;
+	struct klua_state *state;
+	int key;
 
-	if (xt_lua == NULL)
-		return NULL;
+	key = name_hash(name);
 
-	head = &xt_lua->state_table[name_hash(xt_lua, name)];
-	kpi_hlist_for_each_entry_rcu(state, head, node) {
-		if (!strncmp(state->name, name, NFLUA_NAME_MAXSIZE))
+	hash_for_each_possible_rcu(states_table, state, node, key) {
+		if (!strncmp(state->name, name, KLUA_NAME_MAXSIZE))
 			return state;
 	}
 	return NULL;
 }
 
-static void state_destroy(struct xt_lua_net *xt_lua, struct nflua_state *s)
+static void state_destroy(struct klua_state *s)
 {
-	hlist_del_rcu(&s->node);
-	atomic_dec(&xt_lua->state_count);
+	hash_del_rcu(&s->node);
+	atomic_dec(&states_count);
 
 	spin_lock_bh(&s->lock);
 	if (s->L != NULL) {
@@ -80,12 +88,12 @@ static void state_destroy(struct xt_lua_net *xt_lua, struct nflua_state *s)
 	}
 	spin_unlock_bh(&s->lock);
 
-	nflua_state_put(s);
+	klua_state_put(s);
 }
 
 static void *lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 {
-	struct nflua_state *s = ud;
+	struct klua_state *s = ud;
 	void *nptr = NULL;
 
 	/* osize doesn't represent the object old size if ptr is NULL */
@@ -96,7 +104,7 @@ static void *lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 		kfree(ptr);
 	} else if (s->curralloc - osize + nsize > s->maxalloc) {
 		pr_warn_ratelimited("maxalloc limit %zu reached on state %.*s\n",
-		    s->maxalloc, NFLUA_NAME_MAXSIZE, s->name);
+		    s->maxalloc, KLUA_NAME_MAXSIZE, s->name);
 	} else if ((nptr = krealloc(ptr, nsize, GFP_ATOMIC)) != NULL) {
 		s->curralloc += nsize - osize;
 	}
@@ -104,36 +112,28 @@ static void *lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 	return nptr;
 }
 
-static int state_init(struct nflua_state *s)
+static int state_init(struct klua_state *s)
 {
-	const luaL_Reg *lib;
-
+	
 	s->L = lua_newstate(lua_alloc, s);
 	if (s->L == NULL)
 		return -ENOMEM;
 
-	luaU_setenv(s->L, s, struct nflua_state);
+	luaU_setenv(s->L, s, struct klua_state);
 	luaL_openlibs(s->L);
-
-	for (lib = libs; lib->name != NULL; lib++) {
-		luaL_requiref(s->L, lib->name, lib->func, 1);
-		lua_pop(s->L, 1);
-	}
 
 	/* fixes an issue where the Lua's GC enters a vicious cycle.
 	 * more info here: https://marc.info/?l=lua-l&m=155024035605499&w=2
 	 */
-	lua_gc(s->L, LUA_GCSETPAUSE, NFLUA_SETPAUSE);
+	lua_gc(s->L, LUA_GCSETPAUSE, KLUA_SETPAUSE);
 
 	return 0;
 }
 
-struct nflua_state *klua_state_create(struct xt_lua_net *xt_lua,
-	size_t maxalloc, const char *name)
+struct klua_state *klua_state_create(size_t maxalloc, const char *name)
 {
-	struct hlist_head *head;
-	struct nflua_state *s = nflua_state_lookup(xt_lua, name);
-	int namelen = strnlen(name, NFLUA_NAME_MAXSIZE);
+	struct klua_state *s = klua_state_lookup(name);
+	int namelen = strnlen(name, KLUA_NAME_MAXSIZE);
 
 	pr_debug("creating state: %.*s maxalloc: %zd\n", namelen, name,
 		maxalloc);
@@ -143,29 +143,27 @@ struct nflua_state *klua_state_create(struct xt_lua_net *xt_lua,
 		return NULL;
 	}
 
-	if (atomic_read(&xt_lua->state_count) >= NFLUA_MAX_STATES) {
+	if (atomic_read(&states_count) >= (1 << KLUA_MAX_STATES_COUNT)) {
 		pr_err("could not allocate id for state %.*s\n", namelen, name);
 		pr_err("max states limit reached or out of memory\n");
 		return NULL;
 	}
 
-	if (maxalloc < NFLUA_MIN_ALLOC_BYTES) {
+	if (maxalloc < KLUA_MIN_ALLOC_BYTES) {
 		pr_err("maxalloc %zu should be greater then MIN_ALLOC %zu\n",
-		    maxalloc, NFLUA_MIN_ALLOC_BYTES);
+		    maxalloc, KLUA_MIN_ALLOC_BYTES);
 		return NULL;
 	}
 
-	if ((s = kzalloc(sizeof(struct nflua_state), GFP_ATOMIC)) == NULL) {
+	if ((s = kzalloc(sizeof(struct klua_state), GFP_ATOMIC)) == NULL) {
 		pr_err("could not allocate nflua state\n");
 		return NULL;
 	}
 
-	INIT_HLIST_NODE(&s->node);
 	spin_lock_init(&s->lock);
 	s->dseqnum   = 0;
 	s->maxalloc  = maxalloc;
 	s->curralloc = 0;
-	s->xt_lua    = xt_lua;
 	memcpy(&(s->name), name, namelen);
 
 	if (state_init(s)) {
@@ -173,37 +171,38 @@ struct nflua_state *klua_state_create(struct xt_lua_net *xt_lua,
 		kfree(s);
 		return NULL;
 	}
+	
 
-	spin_lock_bh(&xt_lua->state_lock);
-	head = &xt_lua->state_table[name_hash(xt_lua, name)];
-	hlist_add_head_rcu(&s->node, head);
-	kpi_refcount_inc(&s->users);
-	atomic_inc(&xt_lua->state_count);
-	spin_unlock_bh(&xt_lua->state_lock);
-
+	spin_lock_bh(&gstorage_lock);
+	hash_add_rcu(states_table, &(s->node), name_hash(name));
+	refcount_inc(&s->users);
+	atomic_inc(&states_count);
+	spin_unlock_bh(&gstorage_lock);
+	
 	pr_debug("new state created: %.*s\n", namelen, name);
 	return s;
 }
 
-int klua_state_destroy(struct xt_lua_net *xt_lua, const char *name)
+int klua_state_destroy(const char *name)
 {
-	struct nflua_state *s = nflua_state_lookup(xt_lua, name);
+	struct klua_state *s = klua_state_lookup(name);
 
-	if (s == NULL || kpi_refcount_read(&s->users) > 1)
+	if (s == NULL || refcount_read(&s->users) > 1)
 		return -1;
 
-	spin_lock_bh(&xt_lua->state_lock);
-	state_destroy(xt_lua, s);
-	spin_unlock_bh(&xt_lua->state_lock);
-
+	spin_lock_bh(&gstorage_lock);
+	state_destroy(s);
+	spin_unlock_bh(&gstorage_lock);
+	
 	return 0;
 }
 
-int klua_state_list(struct xt_lua_net *xt_lua, nflua_state_cb cb,
+#ifndef PASS
+int klua_state_list(struct xt_lua_net *xt_lua, klua_state_cb cb,
 	unsigned short *total)
 {
 	struct hlist_head *head;
-	struct nflua_state *s;
+	struct klua_state *s;
 	int i, ret = 0;
 
 	spin_lock_bh(&xt_lua->state_lock);
@@ -222,54 +221,49 @@ out:
 	spin_unlock_bh(&xt_lua->state_lock);
 	return ret;
 }
+#endif
 
-void klua_state_destroy_all(struct xt_lua_net *xt_lua)
+void klua_state_destroy_all()
 {
-	struct hlist_head *head;
+	struct klua_state *s;
 	struct hlist_node *tmp;
-	struct nflua_state *s;
-	int i;
+	int bkt;
 
-	spin_lock_bh(&xt_lua->state_lock);
-	for (i = 0; i < XT_LUA_HASH_BUCKETS; i++) {
-		head = &xt_lua->state_table[i];
-		kpi_hlist_for_each_entry_safe(s, tmp, head, node) {
-			state_destroy(xt_lua, s);
-		}
+	spin_lock_bh(&gstorage_lock);
+
+	hash_for_each_safe(states_table,bkt,tmp,s,node) {
+		state_destroy(s);
 	}
-	spin_unlock_bh(&xt_lua->state_lock);
+
+	spin_unlock_bh(&gstorage_lock);
+	
 }
 
-bool klua_state_get(struct nflua_state *s)
+bool klua_state_get(struct klua_state *s)
 {
-	return kpi_refcount_inc_not_zero(&s->users);
+	return refcount_inc_not_zero(&s->users);
 }
 
-void klua_state_put(struct nflua_state *s)
+void klua_state_put(struct klua_state *s)
 {
-	struct xt_lua_net *xt_lua;
 
 	if (WARN_ON(s == NULL))
 		return;
 
-	xt_lua = s->xt_lua;
-	if (refcount_dec_and_lock_bh(&s->users, &xt_lua->rfcnt_lock)) {
+	if (refcount_dec_and_lock_bh(&s->users, &gstorage_lock)) {
 		kfree(s);
-		spin_unlock_bh(&xt_lua->rfcnt_lock);
+		spin_unlock_bh(&gstorage_lock);
 	}
 }
 
-void klua_states_init(struct xt_lua_net *xt_lua)
+void klua_states_init()
 {
-	int i;
-	atomic_set(&xt_lua->state_count, 0);
-	spin_lock_init(&xt_lua->state_lock);
-	spin_lock_init(&xt_lua->rfcnt_lock);
-	for (i = 0; i < XT_LUA_HASH_BUCKETS; i++)
-		INIT_HLIST_HEAD(&xt_lua->state_table[i]);
+	atomic_set(&states_count, 0);
+	spin_lock_init(&gstorage_lock);
+	hash_init(states_table);
 }
 
-void klua_states_exit(struct xt_lua_net *xt_lua)
+void klua_states_exit()
 {
-	nflua_state_destroy_all(xt_lua);
+	klua_state_destroy_all();
 }
