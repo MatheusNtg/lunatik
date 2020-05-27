@@ -171,6 +171,7 @@ EXPORT_SYMBOL(klua_state_destroy_all);
 EXPORT_SYMBOL(klua_states_init);
 EXPORT_SYMBOL(klua_states_exit);
 EXPORT_SYMBOL(klua_state_list);
+EXPORT_SYMBOL(klua_execute);
 
 
 static int __init modinit(void)

@@ -25,6 +25,7 @@
 #include <linux/hashtable.h>
 
 #include <lualib.h>
+#include <lauxlib.h>
 
 #include "states.h"
 
@@ -35,7 +36,7 @@
 
 DEFINE_HASHTABLE(states_table, KLUA_MAX_STATES_COUNT);
 spinlock_t gstorage_lock; // This is the locked used to lock operations on the global hash table
-spinlock_t states_count_lock;
+spinlock_t rfcnt_lock;
 atomic_t states_count;
 
 static int name_hash(const char *name)
@@ -262,9 +263,9 @@ void klua_state_put(struct klua_state *s)
 	if (WARN_ON(s == NULL))
 		return;
 
-	if (refcount_dec_and_lock_bh(&(s->users), &states_count_lock)) {
+	if (refcount_dec_and_lock_bh(&(s->users), &rfcnt_lock)) {
 		kfree(s);
-		spin_unlock_bh(&states_count_lock);
+		spin_unlock_bh(&rfcnt_lock);
 	}
 }
 
@@ -272,11 +273,21 @@ void klua_states_init()
 {
 	atomic_set(&states_count, 0);
 	spin_lock_init(&gstorage_lock);
-	spin_lock_init(&states_count_lock);
+	spin_lock_init(&rfcnt_lock);
 	hash_init(states_table);
 }
 
 void klua_states_exit()
 {
 	klua_state_destroy_all();
+}
+
+void klua_execute(const char *name, const char *code)
+{
+	struct klua_state *state;
+	state = klua_state_lookup(name);
+	if(name == NULL || code == NULL || state == NULL)
+		return;
+
+	luaL_dostring(state->L, code);
 }

@@ -55,24 +55,19 @@ typedef int (*klua_state_cb)(struct klua_state *s, unsigned short *total);
 #endif
 
 void klua_state_list(void);
-
 struct klua_state *klua_state_create(size_t maxalloc, const char *name);
-
 int klua_state_destroy(const char *name);
-
 struct klua_state *klua_state_lookup(const char *name);
+void klua_state_destroy_all(void);
+bool klua_state_get(struct klua_state *s);
+void klua_state_put(struct klua_state *s);
+void klua_states_init(void);
+void klua_states_exit(void);
+void klua_execute(const char *name, const char *code);
 
 #ifndef PASS
 int klua_state_list(struct xt_lua_net *xt_lua, klua_state_cb cb,
 	unsigned short *total);
 #endif
-
-void klua_state_destroy_all(void);
-
-bool klua_state_get(struct klua_state *s);
-void klua_state_put(struct klua_state *s);
-
-void klua_states_init(void);
-void klua_states_exit(void);
 
 #endif /* klua_stateS_H */
