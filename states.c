@@ -33,8 +33,9 @@
 #endif /* KLUA_SETPAUSE */
 
 
-DEFINE_READ_MOSTLY_HASHTABLE(states_table, KLUA_MAX_STATES_COUNT);
+DEFINE_HASHTABLE(states_table, KLUA_MAX_STATES_COUNT);
 spinlock_t gstorage_lock; // This is the locked used to lock operations on the global hash table
+spinlock_t states_count_lock;
 atomic_t states_count;
 
 static int name_hash(const char *name)
@@ -50,15 +51,19 @@ static int name_hash(const char *name)
 
 static bool refcount_dec_and_lock_bh(refcount_t *r, spinlock_t *lock)
 {
+	printk(KERN_INFO "Inicio do refcount_dec_and_lock_bh\n");
 	if (refcount_dec_not_one(r))
 		return false;
 
+	printk(KERN_INFO "Depois do primeiro if\n");
 	spin_lock_bh(lock);
 	if (!refcount_dec_and_test(r)) {
+		printk(KERN_INFO "Dentro do primeiro if\n");
 		spin_unlock_bh(lock);
+		printk(KERN_INFO "Depois do unlock\n");
 		return false;
 	}
-
+	printk(KERN_INFO "Antes do retorno\n");
 	return true;
 }
 
@@ -87,8 +92,11 @@ static void state_destroy(struct klua_state *s)
 		s->L = NULL;
 	}
 	spin_unlock_bh(&s->lock);
-
+	printk(KERN_INFO "Até aqui tudo bem\n");
+	if (s == NULL)
+		printk("S é NULL\n");
 	klua_state_put(s);
+	printk(KERN_INFO "Depois do put também\n");
 }
 
 static void *lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
@@ -172,11 +180,10 @@ struct klua_state *klua_state_create(size_t maxalloc, const char *name)
 		return NULL;
 	}
 	
-
 	spin_lock_bh(&gstorage_lock);
 	hash_add_rcu(states_table, &(s->node), name_hash(name));
-	refcount_inc(&s->users);
-	atomic_inc(&states_count);
+	refcount_inc(&(s->users));
+	atomic_inc(&(states_count));
 	spin_unlock_bh(&gstorage_lock);
 	
 	pr_debug("new state created: %.*s\n", namelen, name);
@@ -232,6 +239,7 @@ void klua_state_destroy_all()
 	spin_lock_bh(&gstorage_lock);
 
 	hash_for_each_safe(states_table,bkt,tmp,s,node) {
+		printk("Tentando destruir o estado %s\n", s->name);
 		state_destroy(s);
 	}
 
@@ -241,16 +249,18 @@ void klua_state_destroy_all()
 
 bool klua_state_get(struct klua_state *s)
 {
-	return refcount_inc_not_zero(&s->users);
+	return refcount_inc_not_zero(&(s->users));
 }
 
+// O problema está aqui
 void klua_state_put(struct klua_state *s)
 {
 
 	if (WARN_ON(s == NULL))
 		return;
+	printk("Depois do WARN ok\n");
 
-	if (refcount_dec_and_lock_bh(&s->users, &gstorage_lock)) {
+	if (refcount_dec_and_lock_bh(&(s->users), &states_count_lock)) {
 		kfree(s);
 		spin_unlock_bh(&gstorage_lock);
 	}
@@ -260,6 +270,7 @@ void klua_states_init()
 {
 	atomic_set(&states_count, 0);
 	spin_lock_init(&gstorage_lock);
+	spin_lock_init(&states_count_lock);
 	hash_init(states_table);
 }
 
