@@ -221,6 +221,19 @@ out:
 }
 #endif
 
+void klua_state_list()
+{
+	int bkt;
+	struct klua_state *state;
+
+	if(hash_empty(states_table))
+		return;
+
+	hash_for_each_rcu(states_table, bkt, state, node){
+		printk("State %s, curralloc %ld, maxalloc %ld\n", state->name, state->curralloc, state->maxalloc);
+	}
+}
+
 void klua_state_destroy_all()
 {
 	struct klua_state *s;
