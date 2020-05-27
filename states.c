@@ -251,7 +251,7 @@ void klua_state_put(struct klua_state *s)
 
 	if (refcount_dec_and_lock_bh(&(s->users), &states_count_lock)) {
 		kfree(s);
-		spin_unlock_bh(&gstorage_lock);
+		spin_unlock_bh(&states_count_lock);
 	}
 }
 
