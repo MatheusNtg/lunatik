@@ -256,7 +256,6 @@ bool klua_state_get(struct klua_state *s)
 	return refcount_inc_not_zero(&(s->users));
 }
 
-// O problema está aqui
 void klua_state_put(struct klua_state *s)
 {
 

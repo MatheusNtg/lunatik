@@ -44,7 +44,9 @@ struct klua_state {
 	lua_State *L;
 	spinlock_t lock;
 	refcount_t users;
+	#ifndef PASS
 	u32 dseqnum;
+	#endif
 	size_t maxalloc;
 	size_t curralloc;
 	unsigned char name[KLUA_NAME_MAXSIZE];
