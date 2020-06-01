@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2020  Matheus Rodrigues <matheussr61@gmail.com>
  * Copyright (C) 2017-2019  CUJO LLC
  *
  * This program is free software; you can redistribute it and/or modify
@@ -16,48 +17,55 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#ifndef NFLUA_STATES_H
-#define NFLUA_STATES_H
+#ifndef KLUA_STATES_H
+#define KLUA_STATES_H
 
-#include "kpi_compat.h"
+#include "lua/lua.h"
 
-#include <lua.h>
+#define KLUA_NAME_MAXSIZE 64
+#define KLUA_MIN_ALLOC_BYTES (32 * 1024UL)
+#define KLUA_MAX_STATES_COUNT 32
 
-#define NFLUA_NAME_MAXSIZE 64
-
-struct xt_lua_net;
-
-struct nflua_state {
-	struct hlist_node node;
-	lua_State *L;
-	struct xt_lua_net *xt_lua;
-	spinlock_t lock;
-	kpi_refcount_t users;
-	u32 dseqnum;
-	size_t maxalloc;
-	size_t curralloc;
-	unsigned char name[NFLUA_NAME_MAXSIZE];
+struct meta_state
+{
+	struct hlist_head states_table[KLUA_MAX_STATES_COUNT];
+	spinlock_t statestable_lock;
+	spinlock_t rfcnt_lock;
+	atomic_t states_count;
 };
 
-typedef int (*nflua_state_cb)(struct nflua_state *s, unsigned short *total);
+struct klua_state {
+	struct hlist_node node;
+	struct meta_state *ms;
+	lua_State *L;
+	spinlock_t lock;
+	refcount_t users;
+	#ifndef LUNATIK_UNUSED
+	u32 dseqnum;
+	#endif /*LUNATIK_UNUSED*/
+	size_t maxalloc;
+	size_t curralloc;
+	unsigned char name[KLUA_NAME_MAXSIZE];
+};
 
-struct nflua_state *nflua_state_create(struct xt_lua_net *xt_lua,
-        size_t maxalloc, const char *name);
+#ifndef LUNATIK_UNUSED
+typedef int (*klua_state_cb)(struct klua_state *s, unsigned short *total);
+#endif /*LUNATIK_UNUSED*/
 
-int nflua_state_destroy(struct xt_lua_net *xt_lua, const char *name);
+void klua_state_list(struct meta_state *ms);
+struct klua_state *klua_state_create(struct meta_state *ms, size_t maxalloc, const char *name);
+int klua_state_destroy(struct meta_state *ms, const char *name);
+struct klua_state *klua_state_lookup(struct meta_state *ms, const char *name);
+void klua_state_destroy_all(struct meta_state *ms);
+bool klua_state_get(struct klua_state *s);
+void klua_state_put(struct klua_state *s);
+struct meta_state *klua_states_init(void);
+void klua_states_exit(struct meta_state *ms);
+void klua_execute(struct meta_state *ms, const char *name, const char *code);
 
-struct nflua_state *nflua_state_lookup(struct xt_lua_net *xt_lua,
-        const char *name);
-
-int nflua_state_list(struct xt_lua_net *xt_lua, nflua_state_cb cb,
+#ifndef LUNATIK_UNUSED
+int klua_state_list(struct xt_lua_net *xt_lua, klua_state_cb cb,
 	unsigned short *total);
+#endif /*LUNATIK_UNUSED*/
 
-void nflua_state_destroy_all(struct xt_lua_net *xt_lua);
-
-bool nflua_state_get(struct nflua_state *s);
-void nflua_state_put(struct nflua_state *s);
-
-void nflua_states_init(struct xt_lua_net *xt_lua);
-void nflua_states_exit(struct xt_lua_net *xt_lua);
-
-#endif /* NFLUA_STATES_H */
+#endif /* klua_stateS_H */
