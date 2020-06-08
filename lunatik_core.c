@@ -1,4 +1,5 @@
 /*
+* Copyright (C) 2020  Matheus Rodrigues <matheussr61@gmail.com>
 * Copyright (c) 2017-2019 CUJO LLC.
 *
 * Permission is hereby granted, free of charge, to any person obtaining
