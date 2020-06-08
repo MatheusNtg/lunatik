@@ -23,9 +23,11 @@
 #include <linux/idr.h>
 #include <linux/ratelimit.h>
 #include <linux/hashtable.h>
+#include <linux/stringhash.h>
 
 #include "lua/lualib.h"
 #include "lua/lauxlib.h"
+
 #include "luautil.h"
 #include "states.h"
 
@@ -33,15 +35,12 @@
 #define KLUA_SETPAUSE	100
 #endif /* KLUA_SETPAUSE */
 
-static int name_hash(const char *name)
-{
-	int key = 0;
-    char temp;
-    while((temp = *name++)){
-        key += temp;
-    }
+static struct meta_state ms;
 
-    return key;
+static inline int name_hash(void *salt, const char *name)
+{
+	int len = strnlen(name, KLUA_NAME_MAXSIZE);
+	return full_name_hash(salt, name, len) & (KLUA_MAX_BCK_COUNT - 1);
 }
 
 static bool refcount_dec_and_lock_bh(refcount_t *r, spinlock_t *lock)
@@ -57,24 +56,24 @@ static bool refcount_dec_and_lock_bh(refcount_t *r, spinlock_t *lock)
 	return true;
 }
 
-struct klua_state *klua_state_lookup(struct meta_state *ms, const char *name)
+struct klua_state *klua_state_lookup(const char *name)
 {
 	struct klua_state *state;
 	int key;
 
-	key = name_hash(name);
+	key = name_hash(&ms,name);
 
-	hash_for_each_possible_rcu(ms->states_table, state, node, key) {
+	hash_for_each_possible_rcu(ms.states_table, state, node, key) {
 		if (!strncmp(state->name, name, KLUA_NAME_MAXSIZE))
 			return state;
 	}
 	return NULL;
 }
 
-static void state_destroy(struct meta_state *ms, struct klua_state *s)
+static void state_destroy(struct klua_state *s)
 {
 	hash_del_rcu(&s->node);
-	atomic_dec(&(ms->states_count));
+	atomic_dec(&(ms.states_count));
 
 	spin_lock_bh(&s->lock);
 	if (s->L != NULL) {
@@ -124,9 +123,9 @@ static int state_init(struct klua_state *s)
 	return 0;
 }
 
-struct klua_state *klua_state_create(struct meta_state *ms, size_t maxalloc, const char *name)
+struct klua_state *klua_state_create(size_t maxalloc, const char *name)
 {
-	struct klua_state *s = klua_state_lookup(ms,name);
+	struct klua_state *s = klua_state_lookup(name);
 	int namelen = strnlen(name, KLUA_NAME_MAXSIZE);
 
 	pr_debug("creating state: %.*s maxalloc: %zd\n", namelen, name,
@@ -137,7 +136,7 @@ struct klua_state *klua_state_create(struct meta_state *ms, size_t maxalloc, con
 		return NULL;
 	}
 
-	if (atomic_read(&(ms->states_count)) >= KLUA_MAX_STATES_COUNT) {
+	if (atomic_read(&(ms.states_count)) >= KLUA_MAX_BCK_COUNT) {
 		pr_err("could not allocate id for state %.*s\n", namelen, name);
 		pr_err("max states limit reached or out of memory\n");
 		return NULL;
@@ -157,7 +156,6 @@ struct klua_state *klua_state_create(struct meta_state *ms, size_t maxalloc, con
 	spin_lock_init(&s->lock);
 	s->maxalloc  = maxalloc;
 	s->curralloc = 0;
-	s->ms 		 = ms;
 	memcpy(&(s->name), name, namelen);
 
 	if (state_init(s)) {
@@ -166,26 +164,26 @@ struct klua_state *klua_state_create(struct meta_state *ms, size_t maxalloc, con
 		return NULL;
 	}
 	
-	spin_lock_bh(&(ms->statestable_lock));
-	hash_add_rcu(ms->states_table, &(s->node), name_hash(name));
+	spin_lock_bh(&(ms.statestable_lock));
+	hash_add_rcu(ms.states_table, &(s->node), name_hash(&ms,name));
 	refcount_inc(&(s->users));
-	atomic_inc(&(ms->states_count));
-	spin_unlock_bh(&(ms->statestable_lock));
+	atomic_inc(&(ms.states_count));
+	spin_unlock_bh(&(ms.statestable_lock));
 	
 	pr_debug("new state created: %.*s\n", namelen, name);
 	return s;
 }
 
-int klua_state_destroy(struct meta_state *ms, const char *name)
+int klua_state_destroy(const char *name)
 {
-	struct klua_state *s = klua_state_lookup(ms,name);
+	struct klua_state *s = klua_state_lookup(name);
 
 	if (s == NULL || refcount_read(&s->users) > 1)
 		return -1;
 
-	spin_lock_bh(&(ms->statestable_lock));
-	state_destroy(ms,s);
-	spin_unlock_bh(&(ms->statestable_lock));
+	spin_lock_bh(&(ms.statestable_lock));
+	state_destroy(s);
+	spin_unlock_bh(&(ms.statestable_lock));
 
 	return 0;
 }
@@ -216,32 +214,32 @@ out:
 }
 #endif /*LUNATIK_UNUSED*/
 
-void klua_state_list(struct meta_state *ms)
+void klua_state_list()
 {
 	int bkt;
 	struct klua_state *state;
 
-	if(hash_empty(ms->states_table))
+	if(hash_empty(ms.states_table))
 		return;
 
-	hash_for_each_rcu(ms->states_table, bkt, state, node){
+	hash_for_each_rcu(ms.states_table, bkt, state, node){
 		printk("State %s, curralloc %ld, maxalloc %ld\n", state->name, state->curralloc, state->maxalloc);
 	}
 }
 
-void klua_state_destroy_all(struct meta_state *ms)
+void klua_state_destroy_all()
 {
 	struct klua_state *s;
 	struct hlist_node *tmp;
 	int bkt;
 
-	spin_lock_bh(&(ms->statestable_lock));
+	spin_lock_bh(&(ms.statestable_lock));
 
-	hash_for_each_safe(ms->states_table,bkt,tmp,s,node) {
-		state_destroy(ms,s);
+	hash_for_each_safe(ms.states_table,bkt,tmp,s,node) {
+		state_destroy(s);
 	}
 
-	spin_unlock_bh(&(ms->statestable_lock));
+	spin_unlock_bh(&(ms.statestable_lock));
 }
 
 bool klua_state_get(struct klua_state *s)
@@ -251,41 +249,36 @@ bool klua_state_get(struct klua_state *s)
 
 void klua_state_put(struct klua_state *s)
 {
-	struct meta_state *ms;
-
 	if (WARN_ON(s == NULL))
 		return;
 
-	ms = s->ms;
-
-	if (refcount_dec_and_lock_bh(&(s->users), &(ms->rfcnt_lock))) {
+	if (refcount_dec_and_lock_bh(&(s->users), &(ms.rfcnt_lock))) {
 		kfree(s);
-		spin_unlock_bh(&(ms->rfcnt_lock));
+		spin_unlock_bh(&(ms.rfcnt_lock));
 	}
 }
 
-struct meta_state* klua_states_init()
+void klua_states_init()
 {	
-	struct meta_state *ms = (struct meta_state*) kmalloc(sizeof(struct meta_state), GFP_ATOMIC);
-	atomic_set(&(ms->states_count), 0);
-	spin_lock_init(&(ms->statestable_lock));
-	spin_lock_init(&(ms->rfcnt_lock));
-	hash_init(ms->states_table);
-
-	return ms;
+	atomic_set(&(ms.states_count), 0);
+	spin_lock_init(&(ms.statestable_lock));
+	spin_lock_init(&(ms.rfcnt_lock));
+	hash_init(ms.states_table);
 }
 
-void klua_states_exit(struct meta_state *ms)
+void klua_states_exit()
 {
-	klua_state_destroy_all(ms);
+	klua_state_destroy_all();
 }
 
-void klua_execute(struct meta_state *ms, const char *name, const char *code)
+void klua_execute(const char *name, const char *code)
 {
 	struct klua_state *state;
-	state = klua_state_lookup(ms, name);
-	if(name == NULL || code == NULL || state == NULL)
+	state = klua_state_lookup(name);
+	if(name == NULL || code == NULL || state == NULL){
+		pr_info("Failed to execute lua code\n");
 		return;
-
+	}
+		
 	luaL_dostring(state->L, code);
 }
