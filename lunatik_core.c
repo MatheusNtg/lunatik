@@ -176,7 +176,6 @@ EXPORT_SYMBOL(klua_states_exit);
 EXPORT_SYMBOL(klua_state_list);
 EXPORT_SYMBOL(klua_execute);
 
-
 static int __init modinit(void)
 {
         genl_register_family(&lunatik_family);

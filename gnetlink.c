@@ -3,7 +3,7 @@
 
 struct nla_policy const l_policy[ATTR_COUNT] = {
 	[STATE_NAME] = {.type = NLA_STRING},
-    [MAX_ALLOC]  = {.type = NLA_U64},
+	[MAX_ALLOC]  = {.type = NLA_U64},
 	[EXEC_CODE]  = {.type = NLA_STRING},
 };
 
@@ -82,7 +82,7 @@ static int netlink_create_state(struct sk_buff *buff, struct genl_info *info)
 
 static int list_states_wrapper(struct sk_buff *buff, struct genl_info *info)
 {
-    klua_state_list();
+	klua_state_list();
 	return 1;
 }
 
@@ -90,21 +90,21 @@ static int execute_lua_code(struct sk_buff *buff, struct genl_info *info)
 {
 	char * state_name = (unsigned char *) nla_data(info->attrs[STATE_NAME]);
 	unsigned char * code =(unsigned char *) nla_data(info->attrs[EXEC_CODE]);
-    struct klua_state *s = klua_state_lookup(state_name);
+	struct klua_state *s = klua_state_lookup(state_name);
 
-    if (s == NULL)
-        return -1;
-    
-    klua_execute(state_name, code);
+	if (s == NULL)
+		return -1;
+
+	klua_execute(state_name, code);
 	return 0;
 }
 
 static int delete_state_wrapper(struct sk_buff *buff, struct genl_info *info)
 {
 	const unsigned char *name = (unsigned char *)nla_data(info->attrs[STATE_NAME]);
-    
-    if (klua_state_destroy(name))
-        return -1;
+
+	if (klua_state_destroy(name))
+		return -1;
 
 	return 0;
 }

@@ -22,7 +22,7 @@ enum lunatik_operations{
 
 enum attributes_ids{
 	STATE_NAME = 1,
-    MAX_ALLOC,
+	MAX_ALLOC,
 	EXEC_CODE,
 	ATTR_COUNT,
 #define ATTR_MAX (ATTR_COUNT - 1)
