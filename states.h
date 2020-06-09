@@ -32,6 +32,7 @@ struct meta_state
 	spinlock_t statestable_lock;
 	spinlock_t rfcnt_lock;
 	atomic_t states_count;
+	uint8_t activated;
 };
 
 struct klua_state {

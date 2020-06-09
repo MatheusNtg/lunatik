@@ -1,0 +1,117 @@
+#include "gnetlink.h"
+#include "states.h"
+
+struct nla_policy const l_policy[ATTR_COUNT] = {
+	[STATE_NAME] = {.type = NLA_STRING},
+    [MAX_ALLOC]  = {.type = NLA_U64},
+	[EXEC_CODE]  = {.type = NLA_STRING},
+};
+
+static int netlink_create_state(struct sk_buff *buff, struct genl_info *info);
+static int list_states_wrapper(struct sk_buff *buff, struct genl_info *info);
+static int execute_lua_code(struct sk_buff *buff, struct genl_info *info);
+static int delete_state_wrapper(struct sk_buff *buff, struct genl_info *info);
+static int destroy_all_states_wrapper(struct sk_buff *buff, struct genl_info *info);
+
+static const struct genl_ops l_ops[] = {
+	{
+		.cmd    = CREATE_STATE,
+		.doit   = netlink_create_state,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		/*Before kernel 5.2.0, each operation has its own policy*/
+		.policy = l_policy
+#endif
+	},
+	{
+		.cmd    = LIST_STATES,
+		.doit   = list_states_wrapper,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		.policy = l_policy
+#endif
+	},
+	{
+		.cmd    = EXECUTE_CODE,
+		.doit   = execute_lua_code,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		.policy = l_policy
+#endif
+	},
+	{
+		.cmd    = DELETE_STATE,
+		.doit   = delete_state_wrapper,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		.policy = l_policy
+#endif
+	},
+	{
+		.cmd    = DESTROY_ALL_STATES,
+		.doit   = destroy_all_states_wrapper,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		/*Before kernel 5.2.0, each operation has its own policy*/
+		.policy = l_policy
+#endif
+	}
+
+};
+
+struct genl_family lunatik_family = {
+	.name 	 = LUNATIK_FAMILY,
+	.version = 1,
+	.maxattr = ATTR_MAX,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0)
+	.policy  = l_policy,
+#endif
+	.module  = THIS_MODULE,
+	.ops     = l_ops,
+	.n_ops   = ARRAY_SIZE(l_ops),
+};
+
+static int netlink_create_state(struct sk_buff *buff, struct genl_info *info)
+{	
+    unsigned char *name = (unsigned char *)nla_data(info->attrs[STATE_NAME]);
+    unsigned long max_alloc = *((unsigned long*) nla_data(info->attrs[MAX_ALLOC]));
+    
+    klua_states_init();
+    
+    if (klua_state_create(max_alloc, name) == NULL)
+        return -1;
+	
+    return 0;
+}
+
+
+static int list_states_wrapper(struct sk_buff *buff, struct genl_info *info)
+{
+    klua_state_list();
+	return 1;
+}
+
+static int execute_lua_code(struct sk_buff *buff, struct genl_info *info)
+{
+	char * state_name = (unsigned char *) nla_data(info->attrs[STATE_NAME]);
+	unsigned char * code =(unsigned char *) nla_data(info->attrs[EXEC_CODE]);
+    struct klua_state *s = klua_state_lookup(state_name);
+
+    if (s == NULL)
+        return -1;
+    
+    klua_execute(state_name, code);
+	return 0;
+}
+
+static int delete_state_wrapper(struct sk_buff *buff, struct genl_info *info)
+{
+	const unsigned char *name = (unsigned char *)nla_data(info->attrs[STATE_NAME]);
+    
+    if (klua_state_destroy(name))
+        return -1;
+
+	return 0;
+}
+
+
+static int destroy_all_states_wrapper(struct sk_buff *buff, struct genl_info *info)
+{
+	klua_state_destroy_all();
+	return 0;
+}

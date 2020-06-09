@@ -35,7 +35,7 @@
 #define KLUA_SETPAUSE	100
 #endif /* KLUA_SETPAUSE */
 
-static struct meta_state ms;
+static struct meta_state ms = {.activated = 0};
 
 static inline int name_hash(void *salt, const char *name)
 {
@@ -260,14 +260,18 @@ void klua_state_put(struct klua_state *s)
 
 void klua_states_init()
 {	
-	atomic_set(&(ms.states_count), 0);
-	spin_lock_init(&(ms.statestable_lock));
-	spin_lock_init(&(ms.rfcnt_lock));
-	hash_init(ms.states_table);
+	if (!ms.activated) {
+		atomic_set(&(ms.states_count), 0);
+		spin_lock_init(&(ms.statestable_lock));
+		spin_lock_init(&(ms.rfcnt_lock));
+		hash_init(ms.states_table);
+		ms.activated = 1;
+	}
 }
 
 void klua_states_exit()
 {
+	ms.activated = 0;
 	klua_state_destroy_all();
 }
 

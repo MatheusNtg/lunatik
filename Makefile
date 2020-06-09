@@ -26,9 +26,9 @@ endif
 
 obj-$(CONFIG_LUNATIK) += lunatik.o
 
-LUA-OBJS = states.o
+lua-objs = states.o gnetlink.o
 
-lunatik-objs += $(LUA-OBJS) lua/lapi.o lua/lcode.o lua/lctype.o lua/ldebug.o lua/ldo.o \
+lunatik-objs += $(lua-objs) lua/lapi.o lua/lcode.o lua/lctype.o lua/ldebug.o lua/ldo.o \
 	 lua/ldump.o lua/lfunc.o lua/lgc.o lua/llex.o lua/lmem.o \
 	 lua/lobject.o lua/lopcodes.o lua/lparser.o lua/lstate.o \
 	 lua/lstring.o lua/ltable.o lua/ltm.o \
