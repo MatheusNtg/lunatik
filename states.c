@@ -170,7 +170,7 @@ struct klua_state *klua_state_create(size_t maxalloc, const char *name)
 	atomic_inc(&(ms.states_count));
 	spin_unlock_bh(&(ms.statestable_lock));
 	
-	pr_debug("new state created: %.*s\n", namelen, name);
+	pr_info("new state created: %.*s\n", namelen, name);
 	return s;
 }
 
@@ -283,6 +283,6 @@ void klua_execute(const char *name, const char *code)
 		pr_info("Failed to execute lua code\n");
 		return;
 	}
-		
+	pr_info("[DEBUG] %s -> Code: %s\n", __func__, code);
 	luaL_dostring(state->L, code);
 }

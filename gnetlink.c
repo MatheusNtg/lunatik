@@ -117,6 +117,8 @@ static int execute_lua_code(struct sk_buff *buff, struct genl_info *info)
 	if (s == NULL)
 		return -1;
 
+	pr_info("[DEBUG] %s -> Code: %s\n", __func__, code);
+
 	klua_execute(state_name, code);
 	return 0;
 }
