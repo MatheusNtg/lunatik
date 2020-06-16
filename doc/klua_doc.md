@@ -1,11 +1,10 @@
 # KLua API Documentation
 
-KLua is the portion of Lunatik responsable for states management. One API is provided to user in order to access all operations provided by KLua. Some of those operations are:
+KLua is the portion of Lunatik responsable for thread-safe states management. One API is provided to user in order to access all operations provided by KLua. Some of those operations are:
 
 * States creation
 * States deletion
 * States listing
-* Lua code execution from a chosen state
 
 The API is based in the data structure `struct klua_state` which is used to perform all needed operations.
 
@@ -60,7 +59,15 @@ Is the unique identifier to `klua_state`, used to search it in the kernel hash t
 
 **`void klua_states_init(void)`**
 
-Initializes the API. You have to call this function before use any of the operations offered by this API, when all operations is done you have to call `klua_states_exit()`.
+Initializes the API. This function is called when Lunatik is initialized.
+
+**`bool klua_state_get(struct klua_state *s)`**
+
+Tries to get the intent to do operations on the state `s`, return true case such intent is sucessfull get and false otherwise. You don't need to show the intent to do the operations offered by the API, after your operations are done, you must call `klua_state_put` to show the API that the state `s` is free.
+
+**`void klua_state_put(struct klua_state *s)`**
+
+Frees the state `s` from the binding initially stablished by `klua_state_put`.
 
 **`struct klua_state *klua_state_lookup(const char *name);`**
 
@@ -79,7 +86,9 @@ Searches for a lunatik state represented by the name `name`, case such state is 
 List on dmesg all created states and their properties.
 
 **`void klua_state_destroy_all()`**
+
 Destroy all created states.
 
-**`void klua_execute(const char *name, const char *code)`**
-Searches for the state represented by `name` and executes the code `code` on Lunatik.
+**`void klua_states_exit()`**
+
+Exit the modules, destroying all created states. This function is called when Lunatik is removed.

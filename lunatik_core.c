@@ -27,9 +27,7 @@
 #include "lua/lua.h"
 #include "lua/lauxlib.h"
 #include "lua/lualib.h"
-
 #include "states.h"
-#include "gnetlink.h"
 
 EXPORT_SYMBOL(lua_checkstack);
 EXPORT_SYMBOL(lua_xmove);
@@ -178,13 +176,13 @@ EXPORT_SYMBOL(klua_execute);
 
 static int __init modinit(void)
 {
-        genl_register_family(&lunatik_family);
-        return 0;
+	klua_states_init();
+	return 0;
 }
 
 static void __exit modexit(void)
 {
-        genl_unregister_family(&lunatik_family);
+	klua_states_exit();
 }
 
 module_init(modinit);

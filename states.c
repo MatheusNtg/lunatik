@@ -35,25 +35,12 @@
 #define KLUA_SETPAUSE	100
 #endif /* KLUA_SETPAUSE */
 
-static struct meta_state ms = {.activated = 0};
+static struct meta_state ms;
 
 static inline int name_hash(void *salt, const char *name)
 {
 	int len = strnlen(name, KLUA_NAME_MAXSIZE);
 	return full_name_hash(salt, name, len) & (KLUA_MAX_BCK_COUNT - 1);
-}
-
-static bool refcount_dec_and_lock_bh(refcount_t *r, spinlock_t *lock)
-{
-	if (refcount_dec_not_one(r))
-		return false;
-
-	spin_lock_bh(lock);
-	if (!refcount_dec_and_test(r)) {
-		spin_unlock_bh(lock);
-		return false;
-	}
-	return true;
 }
 
 struct klua_state *klua_state_lookup(const char *name)
@@ -107,7 +94,6 @@ static void *lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 
 static int state_init(struct klua_state *s)
 {
-	
 	s->L = lua_newstate(lua_alloc, s);
 	if (s->L == NULL)
 		return -ENOMEM;
@@ -170,7 +156,7 @@ struct klua_state *klua_state_create(size_t maxalloc, const char *name)
 	atomic_inc(&(ms.states_count));
 	spin_unlock_bh(&(ms.statestable_lock));
 	
-	pr_info("new state created: %.*s\n", namelen, name);
+	pr_debug("new state created: %.*s\n", namelen, name);
 	return s;
 }
 
@@ -252,37 +238,28 @@ void klua_state_put(struct klua_state *s)
 	if (WARN_ON(s == NULL))
 		return;
 
-	if (refcount_dec_and_lock_bh(&(s->users), &(ms.rfcnt_lock))) {
-		kfree(s);
+	if (refcount_dec_not_one(&(s->users)))
+		return;
+
+	spin_lock_bh(&(ms.rfcnt_lock));
+	if (!refcount_dec_and_test(&(s->users))) {
 		spin_unlock_bh(&(ms.rfcnt_lock));
+		return;
 	}
+	
+	kfree(s);
+	spin_unlock_bh(&(ms.rfcnt_lock));
 }
 
 void klua_states_init()
 {	
-	if (!ms.activated) {
-		atomic_set(&(ms.states_count), 0);
-		spin_lock_init(&(ms.statestable_lock));
-		spin_lock_init(&(ms.rfcnt_lock));
-		hash_init(ms.states_table);
-		ms.activated = 1;
-	}
+	atomic_set(&(ms.states_count), 0);
+	spin_lock_init(&(ms.statestable_lock));
+	spin_lock_init(&(ms.rfcnt_lock));
+	hash_init(ms.states_table);
 }
 
 void klua_states_exit()
 {
-	ms.activated = 0;
 	klua_state_destroy_all();
-}
-
-void klua_execute(const char *name, const char *code)
-{
-	struct klua_state *state;
-	state = klua_state_lookup(name);
-	if(name == NULL || code == NULL || state == NULL){
-		pr_info("Failed to execute lua code\n");
-		return;
-	}
-	pr_info("[DEBUG] %s -> Code: %s\n", __func__, code);
-	luaL_dostring(state->L, code);
 }

@@ -32,7 +32,6 @@ struct meta_state
 	spinlock_t statestable_lock;
 	spinlock_t rfcnt_lock;
 	atomic_t states_count;
-	uint8_t activated;
 };
 
 struct klua_state {
@@ -61,7 +60,6 @@ bool klua_state_get(struct klua_state *s);
 void klua_state_put(struct klua_state *s);
 void klua_states_init(void);
 void klua_states_exit(void);
-void klua_execute(const char *name, const char *code);
 
 #ifndef LUNATIK_UNUSED
 int klua_state_list(struct xt_lua_net *xt_lua, klua_state_cb cb,
