@@ -61,6 +61,16 @@ void klua_state_put(struct klua_state *s);
 void klua_states_init(void);
 void klua_states_exit(void);
 
+void net_state_list(struct meta_state *ms);
+struct klua_state *net_state_create(struct meta_state *ms, size_t maxalloc, const char *name);
+int net_state_destroy(struct meta_state *ms, const char *name);
+struct klua_state *net_state_lookup(struct meta_state *ms, const char *name);
+void net_state_destroy_all(struct meta_state *ms);
+bool net_state_get(struct meta_state *ms, struct klua_state *s);
+void net_state_put(struct meta_state *ms, struct klua_state *s);
+void net_states_init(struct meta_state *ms);
+void net_states_exit(struct meta_state *ms);
+
 #ifndef LUNATIK_UNUSED
 int klua_state_list(struct xt_lua_net *xt_lua, klua_state_cb cb,
 	unsigned short *total);

@@ -20,8 +20,12 @@
 * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
+#include <net/net_namespace.h>
+
 #include "gnetlink.h"
 #include "states.h"
+
+extern struct meta_state *klua_pernet(struct net *);
 
 struct nla_policy const l_policy[ATTR_COUNT] = {
 	[STATE_NAME] = {.type = NLA_STRING},
@@ -89,22 +93,27 @@ struct genl_family lunatik_family = {
 };
 
 static int netlink_create_state(struct sk_buff *buff, struct genl_info *info)
-{	
-    unsigned char *name = (unsigned char *)nla_data(info->attrs[STATE_NAME]);
-    unsigned long max_alloc = *((unsigned long*) nla_data(info->attrs[MAX_ALLOC]));
-    
-    klua_states_init();
-    
-    if (klua_state_create(max_alloc, name) == NULL)
-        return -1;
+{
+	char *name = (char *)nla_data(info->attrs[STATE_NAME]);
+	unsigned long max_alloc = *((unsigned long*) nla_data(info->attrs[MAX_ALLOC]));
+	struct net *net = genl_info_net(info);
+	struct meta_state *ms = klua_pernet(net);
+
+	pr_info("Recebi a mensagem de criar estados\n");
+
+	if(net_state_create(ms,max_alloc, name) == NULL)
+		return -1;
 	
-    return 0;
+	return 0;
 }
 
 
 static int list_states_wrapper(struct sk_buff *buff, struct genl_info *info)
 {
-	klua_state_list();
+	struct net *net = genl_info_net(info);
+	struct meta_state *ms = klua_pernet(net);
+	
+	net_state_list(ms);
 	return 1;
 }
 
@@ -119,7 +128,6 @@ static int execute_lua_code(struct sk_buff *buff, struct genl_info *info)
 
 	pr_info("[DEBUG] %s -> Code: %s\n", __func__, code);
 
-	klua_execute(state_name, code);
 	return 0;
 }
 
@@ -136,6 +144,10 @@ static int delete_state_wrapper(struct sk_buff *buff, struct genl_info *info)
 
 static int destroy_all_states_wrapper(struct sk_buff *buff, struct genl_info *info)
 {
-	klua_state_destroy_all();
+	struct net *net = genl_info_net(info);
+	struct meta_state *ms = klua_pernet(net);
+
+	net_state_destroy_all(ms);
+	
 	return 0;
 }

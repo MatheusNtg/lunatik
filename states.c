@@ -263,3 +263,129 @@ void klua_states_exit()
 {
 	klua_state_destroy_all();
 }
+
+
+void net_state_list(struct meta_state *ms)
+{
+	int bkt;
+	struct klua_state *state;
+
+	if(hash_empty(ms->states_table))
+		return;
+
+	hash_for_each_rcu(ms->states_table, bkt, state, node){
+		printk("State %s, curralloc %ld, maxalloc %ld\n", state->name, state->curralloc, state->maxalloc);
+	}
+	return;
+}
+
+struct klua_state *net_state_lookup(struct meta_state *ms, const char *name)
+{
+	
+	struct klua_state *state;
+	int key;
+
+	key = name_hash(&ms,name);
+
+	hash_for_each_possible_rcu(ms->states_table, state, node, key) {
+		if (!strncmp(state->name, name, KLUA_NAME_MAXSIZE))
+			return state;
+	}
+	return NULL;
+}
+
+struct klua_state *net_state_create(struct meta_state *ms, size_t maxalloc, const char *name)
+{
+
+	struct klua_state *s = net_state_lookup(ms,name);
+	int namelen = strnlen(name, KLUA_NAME_MAXSIZE);
+
+	pr_debug("creating state: %.*s maxalloc: %zd\n", namelen, name,
+		maxalloc);
+
+	if (s != NULL) {
+		pr_err("state already exists: %.*s\n", namelen, name);
+		return NULL;
+	}
+
+	if (atomic_read(&(ms->states_count)) >= KLUA_MAX_BCK_COUNT) {
+		pr_err("could not allocate id for state %.*s\n", namelen, name);
+		pr_err("max states limit reached or out of memory\n");
+		return NULL;
+	}
+
+	if (maxalloc < KLUA_MIN_ALLOC_BYTES) {
+		pr_err("maxalloc %zu should be greater then MIN_ALLOC %zu\n",
+		    maxalloc, KLUA_MIN_ALLOC_BYTES);
+		return NULL;
+	}
+
+	if ((s = kzalloc(sizeof(struct klua_state), GFP_ATOMIC)) == NULL) {
+		pr_err("could not allocate nflua state\n");
+		return NULL;
+	}
+
+	spin_lock_init(&s->lock);
+	s->maxalloc  = maxalloc;
+	s->curralloc = 0;
+	memcpy(&(s->name), name, namelen);
+
+	if (state_init(s)) {
+		pr_err("could not allocate a new lua state\n");
+		kfree(s);
+		return NULL;
+	}
+	
+	spin_lock_bh(&(ms->statestable_lock));
+	hash_add_rcu(ms->states_table, &(s->node), name_hash(&ms,name));
+	refcount_inc(&(s->users));
+	atomic_inc(&(ms->states_count));
+	spin_unlock_bh(&(ms->statestable_lock));
+	
+	pr_debug("new state created: %.*s\n", namelen, name);
+	return s;
+}
+
+int net_state_destroy(struct meta_state *ms, const char *name)
+{
+	struct klua_state *s = net_state_lookup(ms,name);
+
+	if (s == NULL || refcount_read(&s->users) > 1)
+		return -1;
+
+	spin_lock_bh(&(ms->statestable_lock));
+	state_destroy(s);
+	spin_unlock_bh(&(ms->statestable_lock));
+
+	return 0;
+}
+
+void net_state_destroy_all(struct meta_state *ms)
+{
+	struct klua_state *s;
+	struct hlist_node *tmp;
+	int bkt;
+
+	spin_lock_bh(&(ms->statestable_lock));
+
+	hash_for_each_safe(ms->states_table,bkt,tmp,s,node) {
+		state_destroy(s);
+	}
+
+	spin_unlock_bh(&(ms->statestable_lock));
+}
+
+void net_states_init(struct meta_state *ms)
+{
+
+	atomic_set(&(ms->states_count), 0);
+	spin_lock_init(&(ms->statestable_lock));
+	spin_lock_init(&(ms->rfcnt_lock));
+	hash_init(ms->states_table);
+}
+
+void net_states_exit(struct meta_state *ms)
+{
+	net_state_destroy_all(ms);
+}
+

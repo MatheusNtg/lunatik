@@ -23,11 +23,14 @@
 */
 #ifdef __linux__
 #include <linux/module.h>
+#include <net/net_namespace.h>
+#include <net/netns/generic.h>
 
 #include "lua/lua.h"
 #include "lua/lauxlib.h"
 #include "lua/lualib.h"
 #include "states.h"
+#include "gnetlink.h"
 
 EXPORT_SYMBOL(lua_checkstack);
 EXPORT_SYMBOL(lua_xmove);
@@ -172,17 +175,63 @@ EXPORT_SYMBOL(klua_state_destroy_all);
 EXPORT_SYMBOL(klua_states_init);
 EXPORT_SYMBOL(klua_states_exit);
 EXPORT_SYMBOL(klua_state_list);
-EXPORT_SYMBOL(klua_execute);
+EXPORT_SYMBOL(net_state_create);
+EXPORT_SYMBOL(net_state_destroy);
+EXPORT_SYMBOL(net_state_destroy_all);
+EXPORT_SYMBOL(net_states_init);
+EXPORT_SYMBOL(net_states_exit);
+EXPORT_SYMBOL(net_state_list);
+
+static int klua_net_id __read_mostly;
+
+struct meta_state *klua_pernet(struct net *net)
+{
+	return net_generic(net,klua_net_id);
+}
+
+static int __net_init klua_net_init(struct net *net)
+{
+	struct meta_state *ms = klua_pernet(net);
+	pr_info("Debugando o meta estado respectivo à este namespace: %p\n", ms);
+	net_states_init(ms);
+	
+	return 0;
+}
+
+static void __net_exit klua_net_exit(struct net *net)
+{
+	struct meta_state *ms = klua_pernet(net);
+
+	net_states_exit(ms);
+}
+
+static struct pernet_operations klua_net_ops = {
+	.init = klua_net_init,
+	.exit = klua_net_exit,
+	.id   = &klua_net_id,
+	.size = sizeof(struct meta_state),
+};
 
 static int __init modinit(void)
 {
-	klua_states_init();
+	int ret;
+
+	klua_states_init();	
+
+	if ((ret = register_pernet_subsys(&klua_net_ops)))
+		return ret;
+	
+	if ((ret = genl_register_family(&lunatik_family)))
+	       return ret;	
+
 	return 0;
 }
 
 static void __exit modexit(void)
 {
 	klua_states_exit();
+	unregister_pernet_subsys(&klua_net_ops);
+	genl_unregister_family(&lunatik_family);
 }
 
 module_init(modinit);
