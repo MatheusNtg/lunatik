@@ -284,10 +284,12 @@ struct klua_state *net_state_lookup(struct meta_state *ms, const char *name)
 	
 	struct klua_state *state;
 	int key;
+	if (ms == NULL)
+		return NULL;
 
-	key = name_hash(&ms,name);
-
-	hash_for_each_possible_rcu(ms->states_table, state, node, key) {
+	key = name_hash(ms,name);
+	
+	hash_for_each_possible(ms->states_table, state, node, key) {
 		if (!strncmp(state->name, name, KLUA_NAME_MAXSIZE))
 			return state;
 	}
@@ -299,7 +301,7 @@ struct klua_state *net_state_create(struct meta_state *ms, size_t maxalloc, cons
 
 	struct klua_state *s = net_state_lookup(ms,name);
 	int namelen = strnlen(name, KLUA_NAME_MAXSIZE);
-
+	
 	pr_debug("creating state: %.*s maxalloc: %zd\n", namelen, name,
 		maxalloc);
 
@@ -337,7 +339,7 @@ struct klua_state *net_state_create(struct meta_state *ms, size_t maxalloc, cons
 	}
 	
 	spin_lock_bh(&(ms->statestable_lock));
-	hash_add_rcu(ms->states_table, &(s->node), name_hash(&ms,name));
+	hash_add_rcu(ms->states_table, &(s->node), name_hash(ms,name));
 	refcount_inc(&(s->users));
 	atomic_inc(&(ms->states_count));
 	spin_unlock_bh(&(ms->statestable_lock));
@@ -388,4 +390,3 @@ void net_states_exit(struct meta_state *ms)
 {
 	net_state_destroy_all(ms);
 }
-

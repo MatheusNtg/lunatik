@@ -100,8 +100,6 @@ static int netlink_create_state(struct sk_buff *buff, struct genl_info *info)
 	struct net *net = genl_info_net(info);
 	struct meta_state *ms = klua_pernet(net);
 
-	pr_info("Recebi a mensagem de criar estados\n");
-
 	if(net_state_create(ms,max_alloc, name) == NULL)
 		return -1;
 	
@@ -134,9 +132,12 @@ static int execute_lua_code(struct sk_buff *buff, struct genl_info *info)
 
 static int delete_state_wrapper(struct sk_buff *buff, struct genl_info *info)
 {
-	const unsigned char *name = (unsigned char *)nla_data(info->attrs[STATE_NAME]);
+	unsigned char *name = (unsigned char *)nla_data(info->attrs[STATE_NAME]);
+	struct net *net = genl_info_net(info);
+	struct meta_state *ms = klua_pernet(net);
+	
 
-	if (klua_state_destroy(name))
+	if (net_state_destroy(ms,name))
 		return -1;
 
 	return 0;

@@ -192,7 +192,6 @@ struct meta_state *klua_pernet(struct net *net)
 static int __net_init klua_net_init(struct net *net)
 {
 	struct meta_state *ms = klua_pernet(net);
-	pr_info("Debugando o meta estado respectivo à este namespace: %p\n", ms);
 	net_states_init(ms);
 	
 	return 0;
