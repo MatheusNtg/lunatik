@@ -71,6 +71,20 @@ static void state_destroy(struct klua_state *s)
 	klua_state_put(s);
 }
 
+static void from_net_state_destroy(struct meta_state *ms, struct klua_state *s)
+{
+	hash_del_rcu(&s->node);
+	atomic_dec(&(ms->states_count));
+
+	spin_lock_bh(&s->lock);
+	if (s->L != NULL) {
+		lua_close(s->L);
+		s->L = NULL;
+	}
+	spin_unlock_bh(&s->lock);
+	klua_state_put(s);
+}
+
 static void *lua_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 {
 	struct klua_state *s = ud;
@@ -289,7 +303,7 @@ struct klua_state *net_state_lookup(struct meta_state *ms, const char *name)
 
 	key = name_hash(ms,name);
 	
-	hash_for_each_possible(ms->states_table, state, node, key) {
+	hash_for_each_possible_rcu(ms->states_table, state, node, key) {
 		if (!strncmp(state->name, name, KLUA_NAME_MAXSIZE))
 			return state;
 	}
@@ -356,7 +370,7 @@ int net_state_destroy(struct meta_state *ms, const char *name)
 		return -1;
 
 	spin_lock_bh(&(ms->statestable_lock));
-	state_destroy(s);
+	from_net_state_destroy(ms,s);
 	spin_unlock_bh(&(ms->statestable_lock));
 
 	return 0;
