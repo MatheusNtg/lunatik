@@ -84,6 +84,7 @@ struct genl_family lunatik_family = {
 	.name 	 = LUNATIK_FAMILY,
 	.version = 1,
 	.maxattr = ATTR_MAX,
+	.netnsok = true, /*Make this family visible for all namespaces*/
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0)
 	.policy  = l_policy,
 #endif
