@@ -1,4 +1,5 @@
 /*
+* Copyright (c) 2020 Matheus Rodrigues <matheussr61@gmail.com>
 * Copyright (c) 2017-2019 CUJO LLC.
 *
 * Permission is hereby granted, free of charge, to any person obtaining
@@ -26,6 +27,8 @@
 #include "lua/lua.h"
 #include "lua/lauxlib.h"
 #include "lua/lualib.h"
+
+#include "states.h"
 
 EXPORT_SYMBOL(lua_checkstack);
 EXPORT_SYMBOL(lua_xmove);
@@ -165,13 +168,24 @@ EXPORT_SYMBOL(luaopen_string);
 EXPORT_SYMBOL(luaopen_table);
 EXPORT_SYMBOL(luaopen_utf8);
 
+EXPORT_SYMBOL(klua_state_create);
+EXPORT_SYMBOL(klua_state_destroy);
+EXPORT_SYMBOL(klua_state_destroy_all);
+EXPORT_SYMBOL(klua_state_lookup);
+EXPORT_SYMBOL(klua_state_get);
+EXPORT_SYMBOL(klua_state_put);
+
+extern void klua_states_init(void);
+
 static int __init modinit(void)
 {
-        return 0;
+	klua_states_init();
+	return 0;
 }
 
 static void __exit modexit(void)
 {
+	klua_state_destroy_all();
 }
 
 module_init(modinit);
