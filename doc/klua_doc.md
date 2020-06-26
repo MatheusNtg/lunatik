@@ -4,7 +4,11 @@ KLua is the portion of Lunatik responsable for thread-safe states management. On
 
 * States creation
 * States deletion
+<<<<<<< HEAD
 * States listing
+=======
+* State lookup
+>>>>>>> gsoc_2020
 
 The API is based in the data structure `struct klua_state` which is used to perform all needed operations.
 
@@ -57,10 +61,13 @@ Is the unique identifier to `klua_state`, used to search it in the kernel hash t
 
 ## Functions offered by the API
 
+<<<<<<< HEAD
 **`void klua_states_init(void)`**
 
 Initializes the API. This function is called when Lunatik is initialized.
 
+=======
+>>>>>>> gsoc_2020
 **`bool klua_state_get(struct klua_state *s)`**
 
 Tries to get the intent to do operations on the state `s`, return true case such intent is sucessfull get and false otherwise. You don't need to show the intent to do the operations offered by the API, after your operations are done, you must call `klua_state_put` to show the API that the state `s` is free.
@@ -81,6 +88,7 @@ Creates a lunatik state with the max memory usage defined by `maxalloc` and a un
 
 Searches for a lunatik state represented by the name `name`, case such state is found deletes it. Returns `0` case the deletion occours and `-1` ortherwise.
 
+<<<<<<< HEAD
 **`void klua_state_list()`**
 
 List on dmesg all created states and their properties.
@@ -92,3 +100,8 @@ Destroy all created states.
 **`void klua_states_exit()`**
 
 Exit the modules, destroying all created states. This function is called when Lunatik is removed.
+=======
+**`void klua_state_destroy_all()`**
+
+Destroy all created states.
+>>>>>>> gsoc_2020
