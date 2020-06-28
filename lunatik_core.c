@@ -30,7 +30,7 @@
 #include "lua/lauxlib.h"
 #include "lua/lualib.h"
 #include "states.h"
-#include "gnetlink.h"
+#include "netlink_common.h"
 
 EXPORT_SYMBOL(lua_checkstack);
 EXPORT_SYMBOL(lua_xmove);
@@ -169,12 +169,14 @@ EXPORT_SYMBOL(luaopen_os);
 EXPORT_SYMBOL(luaopen_string);
 EXPORT_SYMBOL(luaopen_table);
 EXPORT_SYMBOL(luaopen_utf8);
+
 EXPORT_SYMBOL(klua_state_create);
 EXPORT_SYMBOL(klua_state_destroy);
 EXPORT_SYMBOL(klua_state_destroy_all);
 EXPORT_SYMBOL(klua_states_init);
 EXPORT_SYMBOL(klua_states_exit);
 EXPORT_SYMBOL(klua_state_list);
+
 EXPORT_SYMBOL(net_state_create);
 EXPORT_SYMBOL(net_state_destroy);
 EXPORT_SYMBOL(net_state_destroy_all);
@@ -184,38 +186,40 @@ EXPORT_SYMBOL(net_state_list);
 
 static int klua_net_id __read_mostly;
 
-struct meta_state *klua_pernet(struct net *net)
+struct klua_communication *klua_pernet(struct net *net)
 {
 	return net_generic(net,klua_net_id);
 }
 
 static int __net_init klua_net_init(struct net *net)
 {
-	struct meta_state *ms = klua_pernet(net);
-	net_states_init(ms);
+	struct klua_communication *klc = klua_pernet(net);
+	
+	net_states_init(klc);
+
+	
 	
 	return 0;
 }
 
 static void __net_exit klua_net_exit(struct net *net)
 {
-	struct meta_state *ms = klua_pernet(net);
-
-	net_states_exit(ms);
+	struct klua_communication *klc = klua_pernet(net);
+	net_states_exit(klc);
 }
 
 static struct pernet_operations klua_net_ops = {
 	.init = klua_net_init,
 	.exit = klua_net_exit,
 	.id   = &klua_net_id,
-	.size = sizeof(struct meta_state),
+	.size = sizeof(struct klua_communication),
 };
 
 static int __init modinit(void)
 {
 	int ret;
 
-	klua_states_init();	
+	klua_states_init();
 
 	if ((ret = register_pernet_subsys(&klua_net_ops)))
 		return ret;

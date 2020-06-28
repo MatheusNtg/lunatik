@@ -30,12 +30,13 @@
 
 #include "luautil.h"
 #include "states.h"
+#include "netlink_common.h"
 
 #ifndef KLUA_SETPAUSE
 #define KLUA_SETPAUSE	100
 #endif /* KLUA_SETPAUSE */
 
-static struct meta_state ms;
+static struct klua_communication klc;
 
 static inline int name_hash(void *salt, const char *name)
 {
@@ -48,9 +49,9 @@ struct klua_state *klua_state_lookup(const char *name)
 	struct klua_state *state;
 	int key;
 
-	key = name_hash(&ms,name);
+	key = name_hash(&klc,name);
 
-	hash_for_each_possible_rcu(ms.states_table, state, node, key) {
+	hash_for_each_possible_rcu(klc.states_table, state, node, key) {
 		if (!strncmp(state->name, name, KLUA_NAME_MAXSIZE))
 			return state;
 	}
@@ -60,7 +61,7 @@ struct klua_state *klua_state_lookup(const char *name)
 static void state_destroy(struct klua_state *s)
 {
 	hash_del_rcu(&s->node);
-	atomic_dec(&(ms.states_count));
+	atomic_dec(&(klc.states_count));
 
 	spin_lock_bh(&s->lock);
 	if (s->L != NULL) {
@@ -71,10 +72,10 @@ static void state_destroy(struct klua_state *s)
 	klua_state_put(s);
 }
 
-static void from_net_state_destroy(struct meta_state *ms, struct klua_state *s)
+static void from_net_state_destroy(struct klua_communication *klc, struct klua_state *s)
 {
 	hash_del_rcu(&s->node);
-	atomic_dec(&(ms->states_count));
+	atomic_dec(&(klc->states_count));
 
 	spin_lock_bh(&s->lock);
 	if (s->L != NULL) {
@@ -136,7 +137,7 @@ struct klua_state *klua_state_create(size_t maxalloc, const char *name)
 		return NULL;
 	}
 
-	if (atomic_read(&(ms.states_count)) >= KLUA_MAX_BCK_COUNT) {
+	if (atomic_read(&(klc.states_count)) >= KLUA_MAX_BCK_COUNT) {
 		pr_err("could not allocate id for state %.*s\n", namelen, name);
 		pr_err("max states limit reached or out of memory\n");
 		return NULL;
@@ -164,11 +165,11 @@ struct klua_state *klua_state_create(size_t maxalloc, const char *name)
 		return NULL;
 	}
 	
-	spin_lock_bh(&(ms.statestable_lock));
-	hash_add_rcu(ms.states_table, &(s->node), name_hash(&ms,name));
+	spin_lock_bh(&(klc.statestable_lock));
+	hash_add_rcu(klc.states_table, &(s->node), name_hash(&klc,name));
 	refcount_inc(&(s->users));
-	atomic_inc(&(ms.states_count));
-	spin_unlock_bh(&(ms.statestable_lock));
+	atomic_inc(&(klc.states_count));
+	spin_unlock_bh(&(klc.statestable_lock));
 	
 	pr_debug("new state created: %.*s\n", namelen, name);
 	return s;
@@ -181,27 +182,27 @@ int klua_state_destroy(const char *name)
 	if (s == NULL || refcount_read(&s->users) > 1)
 		return -1;
 
-	spin_lock_bh(&(ms.statestable_lock));
+	spin_lock_bh(&(klc.statestable_lock));
 	state_destroy(s);
-	spin_unlock_bh(&(ms.statestable_lock));
+	spin_unlock_bh(&(klc.statestable_lock));
 
 	return 0;
 }
 
 #ifndef LUNATIK_UNUSED
-int klua_state_list(struct xt_lua_net *xt_lua, klua_state_cb cb,
+int klua_state_list(struct klua_communication *klc, klua_state_cb cb,
 	unsigned short *total)
 {
 	struct hlist_head *head;
 	struct klua_state *s;
 	int i, ret = 0;
 
-	spin_lock_bh(&xt_lua->state_lock);
+	spin_lock_bh(&klc->state_lock);
 
-	*total = atomic_read(&xt_lua->state_count);
+	*total = atomic_read(&klc->state_count);
 
 	for (i = 0; i < XT_LUA_HASH_BUCKETS; i++) {
-		head = &xt_lua->state_table[i];
+		head = &klc->state_table[i];
 		kpi_hlist_for_each_entry_rcu(s, head, node) {
 			if ((ret = cb(s, total)) != 0)
 				goto out;
@@ -209,7 +210,7 @@ int klua_state_list(struct xt_lua_net *xt_lua, klua_state_cb cb,
 	}
 
 out:
-	spin_unlock_bh(&xt_lua->state_lock);
+	spin_unlock_bh(&klc->state_lock);
 	return ret;
 }
 #endif /*LUNATIK_UNUSED*/
@@ -219,10 +220,10 @@ void klua_state_list()
 	int bkt;
 	struct klua_state *state;
 
-	if(hash_empty(ms.states_table))
+	if(hash_empty(klc.states_table))
 		return;
 
-	hash_for_each_rcu(ms.states_table, bkt, state, node){
+	hash_for_each_rcu(klc.states_table, bkt, state, node){
 		printk("State %s, curralloc %ld, maxalloc %ld\n", state->name, state->curralloc, state->maxalloc);
 	}
 }
@@ -233,13 +234,13 @@ void klua_state_destroy_all()
 	struct hlist_node *tmp;
 	int bkt;
 
-	spin_lock_bh(&(ms.statestable_lock));
+	spin_lock_bh(&(klc.statestable_lock));
 
-	hash_for_each_safe(ms.states_table,bkt,tmp,s,node) {
+	hash_for_each_safe(klc.states_table,bkt,tmp,s,node) {
 		state_destroy(s);
 	}
 
-	spin_unlock_bh(&(ms.statestable_lock));
+	spin_unlock_bh(&(klc.statestable_lock));
 }
 
 bool klua_state_get(struct klua_state *s)
@@ -255,22 +256,22 @@ void klua_state_put(struct klua_state *s)
 	if (refcount_dec_not_one(&(s->users)))
 		return;
 
-	spin_lock_bh(&(ms.rfcnt_lock));
+	spin_lock_bh(&(klc.rfcnt_lock));
 	if (!refcount_dec_and_test(&(s->users))) {
-		spin_unlock_bh(&(ms.rfcnt_lock));
+		spin_unlock_bh(&(klc.rfcnt_lock));
 		return;
 	}
 	
 	kfree(s);
-	spin_unlock_bh(&(ms.rfcnt_lock));
+	spin_unlock_bh(&(klc.rfcnt_lock));
 }
 
 void klua_states_init()
 {	
-	atomic_set(&(ms.states_count), 0);
-	spin_lock_init(&(ms.statestable_lock));
-	spin_lock_init(&(ms.rfcnt_lock));
-	hash_init(ms.states_table);
+	atomic_set(&(klc.states_count), 0);
+	spin_lock_init(&(klc.statestable_lock));
+	spin_lock_init(&(klc.rfcnt_lock));
+	hash_init(klc.states_table);
 }
 
 void klua_states_exit()
@@ -279,41 +280,41 @@ void klua_states_exit()
 }
 
 
-void net_state_list(struct meta_state *ms)
+void net_state_list(struct klua_communication *klc)
 {
 	int bkt;
 	struct klua_state *state;
 
-	if(hash_empty(ms->states_table))
+	if(hash_empty(klc->states_table))
 		return;
 
-	hash_for_each_rcu(ms->states_table, bkt, state, node){
+	hash_for_each_rcu(klc->states_table, bkt, state, node){
 		printk("State %s, curralloc %ld, maxalloc %ld\n", state->name, state->curralloc, state->maxalloc);
 	}
 	return;
 }
 
-struct klua_state *net_state_lookup(struct meta_state *ms, const char *name)
+struct klua_state *net_state_lookup(struct klua_communication *klc, const char *name)
 {
 	
 	struct klua_state *state;
 	int key;
-	if (ms == NULL)
+	if (klc == NULL)
 		return NULL;
 
-	key = name_hash(ms,name);
+	key = name_hash(klc,name);
 	
-	hash_for_each_possible_rcu(ms->states_table, state, node, key) {
+	hash_for_each_possible_rcu(klc->states_table, state, node, key) {
 		if (!strncmp(state->name, name, KLUA_NAME_MAXSIZE))
 			return state;
 	}
 	return NULL;
 }
 
-struct klua_state *net_state_create(struct meta_state *ms, size_t maxalloc, const char *name)
+struct klua_state *net_state_create(struct klua_communication *klc, size_t maxalloc, const char *name)
 {
 
-	struct klua_state *s = net_state_lookup(ms,name);
+	struct klua_state *s = net_state_lookup(klc,name);
 	int namelen = strnlen(name, KLUA_NAME_MAXSIZE);
 	
 	pr_debug("creating state: %.*s maxalloc: %zd\n", namelen, name,
@@ -324,7 +325,7 @@ struct klua_state *net_state_create(struct meta_state *ms, size_t maxalloc, cons
 		return NULL;
 	}
 
-	if (atomic_read(&(ms->states_count)) >= KLUA_MAX_BCK_COUNT) {
+	if (atomic_read(&(klc->states_count)) >= KLUA_MAX_BCK_COUNT) {
 		pr_err("could not allocate id for state %.*s\n", namelen, name);
 		pr_err("max states limit reached or out of memory\n");
 		return NULL;
@@ -352,55 +353,58 @@ struct klua_state *net_state_create(struct meta_state *ms, size_t maxalloc, cons
 		return NULL;
 	}
 	
-	spin_lock_bh(&(ms->statestable_lock));
-	hash_add_rcu(ms->states_table, &(s->node), name_hash(ms,name));
+	spin_lock_bh(&(klc->statestable_lock));
+	hash_add_rcu(klc->states_table, &(s->node), name_hash(klc,name));
 	refcount_inc(&(s->users));
-	atomic_inc(&(ms->states_count));
-	spin_unlock_bh(&(ms->statestable_lock));
+	atomic_inc(&(klc->states_count));
+	spin_unlock_bh(&(klc->statestable_lock));
 	
 	pr_debug("new state created: %.*s\n", namelen, name);
 	return s;
 }
 
-int net_state_destroy(struct meta_state *ms, const char *name)
+int net_state_destroy(struct klua_communication *klc, const char *name)
 {
-	struct klua_state *s = net_state_lookup(ms,name);
+	struct klua_state *s = net_state_lookup(klc,name);
 
 	if (s == NULL || refcount_read(&s->users) > 1)
 		return -1;
 
-	spin_lock_bh(&(ms->statestable_lock));
-	from_net_state_destroy(ms,s);
-	spin_unlock_bh(&(ms->statestable_lock));
+	spin_lock_bh(&(klc->statestable_lock));
+	from_net_state_destroy(klc,s);
+	spin_unlock_bh(&(klc->statestable_lock));
 
 	return 0;
 }
 
-void net_state_destroy_all(struct meta_state *ms)
+void net_state_destroy_all(struct klua_communication *klc)
 {
 	struct klua_state *s;
 	struct hlist_node *tmp;
 	int bkt;
 
-	spin_lock_bh(&(ms->statestable_lock));
+	spin_lock_bh(&(klc->statestable_lock));
 
-	hash_for_each_safe(ms->states_table,bkt,tmp,s,node) {
+	hash_for_each_safe(klc->states_table,bkt,tmp,s,node) {
 		state_destroy(s);
 	}
 
-	spin_unlock_bh(&(ms->statestable_lock));
+	spin_unlock_bh(&(klc->statestable_lock));
 }
 
-void net_states_init(struct meta_state *ms)
+void net_states_init(struct klua_communication *klc)
 {
 
-	atomic_set(&(ms->states_count), 0);
-	spin_lock_init(&(ms->statestable_lock));
-	spin_lock_init(&(ms->rfcnt_lock));
-	hash_init(ms->states_table);
+	atomic_set(&(klc->states_count), 0);
+	spin_lock_init(&(klc->statestable_lock));
+	spin_lock_init(&(klc->rfcnt_lock));
+	hash_init(klc->states_table);
+
+	spin_lock_init(&klc->client_lock);
+	hash_init(klc->clients_table);
 }
 
-void net_states_exit(struct meta_state *ms)
+void net_states_exit(struct klua_communication *klc)
 {
-	net_state_destroy_all(ms);
+	net_state_destroy_all(klc);
 }

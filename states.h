@@ -23,12 +23,13 @@
 #include "lua/lua.h"
 
 #define KLUA_NAME_MAXSIZE 64
-#define KLUA_MIN_ALLOC_BYTES (32 * 1024UL)
 #define KLUA_MAX_BCK_COUNT 32
 
-struct meta_state
+struct klua_communication
 {
 	struct hlist_head states_table[KLUA_MAX_BCK_COUNT];
+	struct hlist_head clients_table[KLUA_MAX_BCK_COUNT];
+	spinlock_t client_lock;
 	spinlock_t statestable_lock;
 	spinlock_t rfcnt_lock;
 	atomic_t states_count;
@@ -61,18 +62,18 @@ void klua_state_put(struct klua_state *s);
 void klua_states_init(void);
 void klua_states_exit(void);
 
-void net_state_list(struct meta_state *ms);
-struct klua_state *net_state_create(struct meta_state *ms, size_t maxalloc, const char *name);
-int net_state_destroy(struct meta_state *ms, const char *name);
-struct klua_state *net_state_lookup(struct meta_state *ms, const char *name);
-void net_state_destroy_all(struct meta_state *ms);
-bool net_state_get(struct meta_state *ms, struct klua_state *s);
-void net_state_put(struct meta_state *ms, struct klua_state *s);
-void net_states_init(struct meta_state *ms);
-void net_states_exit(struct meta_state *ms);
+void net_state_list(struct klua_communication *klc);
+struct klua_state *net_state_create(struct klua_communication *klc, size_t maxalloc, const char *name);
+int net_state_destroy(struct klua_communication *klc, const char *name);
+struct klua_state *net_state_lookup(struct klua_communication *klc, const char *name);
+void net_state_destroy_all(struct klua_communication *klc);
+bool net_state_get(struct klua_communication *klc, struct klua_state *s);
+void net_state_put(struct klua_communication *klc, struct klua_state *s);
+void net_states_init(struct klua_communication *klc);
+void net_states_exit(struct klua_communication *klc);
 
 #ifndef LUNATIK_UNUSED
-int klua_state_list(struct xt_lua_net *xt_lua, klua_state_cb cb,
+int klua_state_list(struct klua_communication *klc, klua_state_cb cb,
 	unsigned short *total);
 #endif /*LUNATIK_UNUSED*/
 

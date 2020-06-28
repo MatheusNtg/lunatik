@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2020  Matheus Rodrigues <matheussr61@gmail.com>
  * Copyright (C) 2017-2019  CUJO LLC
  *
  * This program is free software; you can redistribute it and/or modify
@@ -16,85 +17,108 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#ifndef NFLUA_NETLINK_COMMON_H
-#define NFLUA_NETLINK_COMMON_H
+#ifndef KLUA_NETLINK_COMMON_H
+#define KLUA_NETLINK_COMMON_H
 
 #include <linux/netlink.h>
 
-#include "nfluaconf.h"
-
-#if PAGE_SIZE < 8192UL
-#define NFLUA_PAYLOAD_MAXSIZE PAGE_SIZE
-#define NFLUA_MAX_FRAGS       16
-#else
-#define NFLUA_PAYLOAD_MAXSIZE 8192UL
-#define NFLUA_MAX_FRAGS       8
+#ifdef _KERNEL
+#include <net/genetlink.h>
+extern struct genl_family lunatik_family;
 #endif
 
-#define NFLUA_PAYLOAD_SIZE(x) (NFLUA_PAYLOAD_MAXSIZE - NLMSG_SPACE(x))
+#define KLUA_NAME_MAXSIZE 64
+#define KLUA_MAX_BCK_COUNT 32
 
-#define NFLUA_SCRIPT_FRAG_SIZE \
-	(NFLUA_PAYLOAD_SIZE(sizeof(struct nflua_nl_script)))
+#define LUNATIK_FAMILY "lunatik_family"
 
-#define NFLUA_LIST_FRAG_SIZE \
-	(NFLUA_PAYLOAD_SIZE(sizeof(struct nflua_nl_list)))
+#if PAGE_SIZE < 8192UL
+#define KLUA_PAYLOAD_MAXSIZE PAGE_SIZE
+#define KLUA_MAX_FRAGS       16
+#else
+#define KLUA_PAYLOAD_MAXSIZE 8192UL
+#define KLUA_MAX_FRAGS       8
+#endif
 
-#define NFLUA_DATA_MAXSIZE \
-	(NFLUA_PAYLOAD_SIZE(sizeof(struct nflua_nl_data)))
+#define KLUA_SCRIPTNAME_MAXSIZE 255   /* Max length of Lua script name  */
 
-#define NFLUA_SCRIPT_MAXSIZE (NFLUA_SCRIPT_FRAG_SIZE * NFLUA_MAX_FRAGS) /* +- 64k */
+#define KLUA_PAYLOAD_SIZE(x) (KLUA_PAYLOAD_MAXSIZE - NLMSG_SPACE(x))
 
-#define NFLUA_LIST_MAXSIZE (NFLUA_LIST_FRAG_SIZE * NFLUA_MAX_FRAGS) /* +- 64k */
+#define KLUA_SCRIPT_FRAG_SIZE \
+	(KLUA_PAYLOAD_SIZE(sizeof(struct klua_nl_script)))
 
-#define NFLUA_MAX_STATES (NFLUA_LIST_MAXSIZE / sizeof(struct nflua_nl_state))
+#define KLUA_LIST_FRAG_SIZE \
+	(KLUA_PAYLOAD_SIZE(sizeof(struct klua_nl_list)))
 
-/* NFLua netlink message types */
+#define KLUA_DATA_MAXSIZE \
+	(KLUA_PAYLOAD_SIZE(sizeof(struct klua_nl_data)))
+
+#define KLUA_SCRIPT_MAXSIZE (KLUA_SCRIPT_FRAG_SIZE * KLUA_MAX_FRAGS) /* +- 64k */
+
+#define KLUA_LIST_MAXSIZE (KLUA_LIST_FRAG_SIZE * KLUA_MAX_FRAGS) /* +- 64k */
+
+#define KLUA_MAX_STATES (KLUA_LIST_MAXSIZE / sizeof(struct klua_nl_state))
+
+/* KLua netlink message types */
 enum {
-	NFLMSG_CREATE = 16,       /* NFLua create state msg type   */
-	NFLMSG_DESTROY,           /* NFLua destroy state msg type  */
-	NFLMSG_LIST,              /* NFLua list states msg type    */
-	NFLMSG_EXECUTE,           /* NFLua execute states msg type */
-	NFLMSG_DATA               /* NFLua data                    */
+	CREATE_STATE = 16,	     /* KLua create state msg type      */
+	DESTROY_STATE,           /* KLua destroy state msg type     */
+	LIST_STATES,             /* KLua list states msg type       */
+	EXECUTE_CODE,            /* KLua execute states msg type    */
+	DESTROY_ALL_STATES,      /* KLua destroy all states msg type*/
 };
 
-/* NFLua netlink header flags */
-#define NFLM_F_REQUEST	0x01	  /* A request message             */
-#define NFLM_F_MULTI	0x02	  /* Multipart message             */
-#define NFLM_F_DONE		0x04	  /* Last message                  */
-#define NFLM_F_INIT		0x08	  /* First message                 */
+enum attributes_ids{
+	STATE_NAME = 1,
+	MAX_ALLOC,
+	LUA_CODE,
+	SCRIPT_NAME,
+	SCRIPT_SIZE,
+	FRAG_SEQ,
+	FRAG_OFFSET,
+	ATTR_COUNT,
+#define ATTR_MAX (ATTR_COUNT - 1)
+};
 
-#define NFLUA_MIN_ALLOC_BYTES (32 * 1024UL)
+/* KLua netlink header flags */
+#define NLM_F_REQUEST 	0x01	  /* A request message             */
+#define NLM_F_MULTI 	0x02	  /* Multipart message             */
+#define NLM_F_DONE		0x04	  /* Last message                  */
+#define NLM_F_INIT		0x08	  /* First message                 */
+#define NLM_F_ERR		0x0F	  /* A error msg*/
 
-struct nflua_nl_state {
-	char  name[NFLUA_NAME_MAXSIZE];
+#define KLUA_MIN_ALLOC_BYTES (32 * 1024UL)
+
+struct klua_nl_state {
+	char  name[KLUA_NAME_MAXSIZE];
 	__u32 maxalloc;           /* Max allocated bytes           */
 	__u32 curralloc;          /* Current allocated bytes       */
 };
 
-struct nflua_nl_fragment {
+struct klua_nl_fragment {
 	__u32 seq;                /* Current frament number        */
 	__u32 offset;             /* Current number of items sent  */
 };
 
-struct nflua_nl_list {
+struct klua_nl_list {
 	__u32 total;              /* Total number of items         */
-	struct nflua_nl_fragment frag;
+	struct klua_nl_fragment frag;
 };
 
-struct nflua_nl_destroy {
-	char  name[NFLUA_NAME_MAXSIZE];
+struct klua_nl_destroy {
+	char  name[KLUA_NAME_MAXSIZE];
 };
 
-struct nflua_nl_data {
+struct klua_nl_data {
 	__u32 total;              /* Total number of bytes         */
-	char  name[NFLUA_NAME_MAXSIZE];
+	char  name[KLUA_NAME_MAXSIZE];
 };
 
-struct nflua_nl_script {
+struct klua_nl_script {
 	__u32 total;              /* Total number of bytes         */
-	char  name[NFLUA_NAME_MAXSIZE];
-	char  script[NFLUA_SCRIPTNAME_MAXSIZE];
-	struct nflua_nl_fragment frag;
+	char  name[KLUA_NAME_MAXSIZE];
+	char  script[KLUA_SCRIPTNAME_MAXSIZE];
+	struct klua_nl_fragment frag;
 };
 
-#endif /* NFLUA_NETLINK_COMMON_H */
+#endif /* KLUA_NETLINK_COMMON_H */

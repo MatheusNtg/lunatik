@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2020  Matheus Rodrigues <matheussr61@gmail.com>
  * Copyright (C) 2017-2019  CUJO LLC
  *
  * This program is free software; you can redistribute it and/or modify
@@ -22,29 +23,99 @@
 #include <linux/random.h>
 #include <linux/rculist.h>
 #include <linux/slab.h>
+#include <linux/hashtable.h>
+#include <linux/jhash.h>
 #include <net/sock.h>
 
-#include <lmemlib.h>
-
 #include "luautil.h"
-#include "netlink.h"
-#include "nf_util.h"
-#include "kpi_compat.h"
+#include "states.h"
+#include "netlink_common.h"
 
-#define STATES_PER_FRAG(header)  ((unsigned short)((NFLUA_PAYLOAD_MAXSIZE \
+#define STATES_PER_FRAG(header)  ((unsigned short)((KLUA_PAYLOAD_MAXSIZE \
         - NLMSG_SPACE(sizeof(header))) \
-        / sizeof(struct nflua_nl_state)))
+        / sizeof(struct klua_nl_state)))
 
-#define INIT_FRAG_MAX_STATES	STATES_PER_FRAG(struct nflua_nl_list)
-#define FRAG_MAX_STATES 	STATES_PER_FRAG(struct nflua_nl_fragment)
+#define INIT_FRAG_MAX_STATES	STATES_PER_FRAG(struct klua_nl_list)
+#define FRAG_MAX_STATES 	STATES_PER_FRAG(struct klua_nl_fragment)
 
 #define STATE_OFFSET(hdrptr, hdrsz) \
-	((struct nflua_nl_state *)((char *)hdrptr + NLMSG_ALIGN(hdrsz)))
+	((struct klua_nl_state *)((char *)hdrptr + NLMSG_ALIGN(hdrsz)))
 
 #define DATA_RECV_FUNC "__receive_callback"
 
+extern struct klua_communication *klua_pernet(struct net *);
+
+struct nla_policy const l_policy[ATTR_COUNT] = {
+	[STATE_NAME] = {.type = NLA_STRING},
+	[LUA_CODE]   = {.type = NLA_STRING},
+	[SCRIPT_NAME]= {.type = NLA_STRING},
+	[MAX_ALLOC]  = {.type = NLA_U32},
+	[SCRIPT_SIZE]= {.type = NLA_U32},
+	[FRAG_SEQ]	 = {.type = NLA_U32},
+	[FRAG_OFFSET]= {.type = NLA_U32},
+};
+
+static int klua_create_state(struct sk_buff *buff, struct genl_info *info);
+static int klua_list_states(struct sk_buff *buff, struct genl_info *info);
+static int klua_execute_code(struct sk_buff *buff, struct genl_info *info);
+static int klua_destroy_state(struct sk_buff *buff, struct genl_info *info);
+static int klua_destroy_all_states(struct sk_buff *buff, struct genl_info *info);
+
+static const struct genl_ops l_ops[] = {
+	{
+		.cmd    = CREATE_STATE,
+		.doit   = klua_create_state,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		/*Before kernel 5.2.0, each operation has its own policy*/
+		.policy = l_policy
+#endif
+	},
+	{
+		.cmd    = LIST_STATES,
+		.doit   = klua_list_states,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		.policy = l_policy
+#endif
+	},
+	{
+		.cmd    = EXECUTE_CODE,
+		.doit   = klua_execute_code,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		.policy = l_policy
+#endif
+	},
+	{
+		.cmd    = DESTROY_STATE,
+		.doit   = klua_destroy_state,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		.policy = l_policy
+#endif
+	},
+	{
+		.cmd    = DESTROY_ALL_STATES,
+		.doit   = klua_destroy_all_states,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		/*Before kernel 5.2.0, each operation has its own policy*/
+		.policy = l_policy
+#endif
+	}
+};
+
+struct genl_family lunatik_family = {
+	.name 	 = LUNATIK_FAMILY,
+	.version = 1,
+	.maxattr = ATTR_MAX,
+	.netnsok = true, /*Make this family visible for all namespaces*/
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0)
+	.policy  = l_policy,
+#endif
+	.module  = THIS_MODULE,
+	.ops     = l_ops,
+	.n_ops   = ARRAY_SIZE(l_ops),
+};
+
 struct list_frag {
-	struct nflua_nl_state *state;
+	struct klua_nl_state *state;
 	unsigned short offset;
 	unsigned short total;
 };
@@ -58,9 +129,9 @@ struct list_cursor {
 	unsigned short total;
 };
 
-struct nflua_frag_request {
-	char name[NFLUA_NAME_MAXSIZE];
-	char script[NFLUA_SCRIPTNAME_MAXSIZE];
+struct klua_frag_request {
+	char name[KLUA_NAME_MAXSIZE];
+	char script[KLUA_SCRIPTNAME_MAXSIZE];
 	u32 fragseq;
 	char *buffer;
 	size_t offset;
@@ -68,10 +139,10 @@ struct nflua_frag_request {
 	bool release;
 };
 
-struct nflua_client {
+struct klua_client {
 	struct hlist_node node;
 	struct mutex lock;
-	struct nflua_frag_request request;
+	struct klua_frag_request request;
 	u32 pid;
 	u32 seq;
 	u16 msgtype;
@@ -79,57 +150,53 @@ struct nflua_client {
 
 static u32 hash_random __read_mostly;
 
-#define pid_hash(pid) (jhash_1word(pid, hash_random) & (XT_LUA_HASH_BUCKETS - 1))
+#define pid_hash(pid) (jhash_1word(pid, hash_random) & (KLUA_MAX_BCK_COUNT - 1))
 
-static struct nflua_client *client_lookup(struct xt_lua_net *xt_lua, u32 pid)
+static struct klua_client *client_lookup(struct klua_communication *klc, u32 pid)
 {
-	struct hlist_head *head;
-	struct nflua_client *client;
+	struct klua_client *client;
 
-	if (unlikely(xt_lua == NULL))
+	if (unlikely(klc == NULL))
 		return NULL;
 
-	head = &xt_lua->client_table[pid_hash(pid)];
-	kpi_hlist_for_each_entry_rcu(client, head, node) {
+	hash_for_each_possible_rcu(klc->clients_table, client, node, pid_hash(pid)){
 		if (client->pid == pid)
 			return client;
 	}
 	return NULL;
 }
 
-static struct nflua_client *client_create(struct xt_lua_net *xt_lua, u32 pid)
+static struct klua_client *client_create(struct klua_communication *klc, u32 pid)
 {
-	struct hlist_head *head;
-	struct nflua_client *client;
+	struct klua_client *client;
 
-	if (unlikely(xt_lua == NULL))
+	if (unlikely(klc == NULL))
 		return NULL;
 
-	if ((client = kzalloc(sizeof(struct nflua_client), GFP_ATOMIC)) == NULL)
+	if ((client = kzalloc(sizeof(struct klua_client), GFP_ATOMIC)) == NULL)
 		return NULL;
 
-	INIT_HLIST_NODE(&client->node);
 	mutex_init(&client->lock);
 	client->pid = pid;
-
-	head = &xt_lua->client_table[pid_hash(pid)];
-	hlist_add_head_rcu(&client->node, head);
+	hash_add_rcu(klc->clients_table, &client->node, pid_hash(pid));
 
 	return client;
 }
 
-static inline struct nflua_client *client_find_or_create(
-		struct xt_lua_net *xt_lua, u32 pid)
+static inline struct klua_client *client_find_or_create(
+		struct klua_communication *klc, u32 pid)
 {
-	struct nflua_client *client = client_lookup(xt_lua, pid);
+	struct klua_client *client = client_lookup(klc, pid);
 	if (client == NULL)
-		client = client_create(xt_lua, pid);
+		client = client_create(klc, pid);
 	return client;
 }
 
-static void client_destroy(struct xt_lua_net *xt_lua, u32 pid)
+#ifndef LUNATIK_UNUSED
+
+static void client_destroy(struct klua_communication *klc, u32 pid)
 {
-	struct nflua_client *client = client_lookup(xt_lua, pid);
+	struct klua_client *client = client_lookup(klc, pid);
 
 	if (unlikely(client == NULL))
 		return;
@@ -144,40 +211,58 @@ static void client_destroy(struct xt_lua_net *xt_lua, u32 pid)
 	kfree(client);
 }
 
-static int nflua_get_skb(struct sk_buff **skb, u32 seq, u16 type, int flags,
-		size_t len, gfp_t alloc)
-{
-	*skb = nlmsg_new(len, alloc);
-	if (*skb == NULL)
-		return -ENOMEM;
+#endif /* LUNATIK_UNUSED */
 
-	if (nlmsg_put(*skb, 0, seq, type, len, flags) == NULL) {
-		kfree_skb(*skb);
+//klua_reply(oskb, CREATE_STATE, NLM_F_DONE, 0, GFP_KERNEL, info)
+static int klua_reply(u16 type, int flags, size_t len, gfp_t alloc, 
+	struct genl_info *info)
+{
+	void *msg;
+	struct sk_buff *skb;
+	skb = genlmsg_new(len, alloc);
+
+	if (skb == NULL){
+		pr_debug("Failed to allocate a new generic netlink message\n");
+		return -ENOMEM;
+	}
+
+	msg = genlmsg_put_reply(skb, info, &lunatik_family, flags, type);
+
+	if (msg == NULL) {
+		kfree_skb(skb);
 		return -EMSGSIZE;
 	}
-	return 0;
+
+	genlmsg_end(skb, msg);
+	
+	pr_debug("Put reply with success\n");
+
+
+	return genlmsg_reply(skb, info);
 }
+
+#ifndef LUNATIK_UNUSED
 
 #define nlmsg_send(sock, skb, pid, group) \
        ((group == 0) ? kpi_nlmsg_unicast(sock, skb, pid) : \
                nlmsg_multicast(sock, skb, pid, group, GFP_ATOMIC))
 
-int nflua_nl_send_data(struct nflua_state *s, u32 pid, u32 group,
+int klua_nl_send_data(struct klua_state *s, u32 pid, u32 group,
 		const char *payload, size_t len)
 {
 	struct sk_buff *skb;
-	struct nflua_nl_data *data;
+	struct klua_nl_data *data;
 	int flags, ret = -1;
-	size_t size, hdrsize = NLMSG_ALIGN(sizeof(struct nflua_nl_data));
+	size_t size, hdrsize = NLMSG_ALIGN(sizeof(struct klua_nl_data));
 
-	if (len > NFLUA_DATA_MAXSIZE)
+	if (len > KLUA_DATA_MAXSIZE)
 		return -EMSGSIZE;
 
 	s->dseqnum++;
 	flags = NFLM_F_REQUEST | NFLM_F_DONE;
 	size = len + hdrsize;
 
-	if ((ret = nflua_get_skb(&skb, s->dseqnum, NFLMSG_DATA, flags,
+	if ((ret = klua_reply(&skb, s->dseqnum, NFLMSG_DATA, flags,
 		size, GFP_ATOMIC)) < 0) {
 		pr_err("could not alloc data packet\n");
 		return ret;
@@ -185,74 +270,74 @@ int nflua_nl_send_data(struct nflua_state *s, u32 pid, u32 group,
 
 	data = nlmsg_data((struct nlmsghdr *)skb->data);
 	data->total = len;
-	memcpy(data->name, s->name, NFLUA_NAME_MAXSIZE);
+	memcpy(data->name, s->name, KLUA_NAME_MAXSIZE);
 	memcpy(((char *)data) + hdrsize, payload, len);
 
-	ret = nlmsg_send(s->xt_lua->sock, skb, pid, group);
+	ret = nlmsg_send(s->klc->sock, skb, pid, group);
 	return ret < 0 ? ret : 0;
 }
 
-static int nflua_create_op(struct xt_lua_net *xt_lua, struct sk_buff *skb)
+#endif /* LUNATIK_UNUSED */
+
+static int klua_create_op(struct klua_communication *klc, struct genl_info *info)
 {
-	struct nlmsghdr *nlh = (struct nlmsghdr *)skb->data;
-	struct nflua_nl_state *cmd = nlmsg_data(nlh);
-	struct sk_buff *oskb;
-	struct nflua_state *state;
+	char *state_name = nla_data(info->attrs[STATE_NAME]);
+	unsigned int *max_alloc = (unsigned int*) nla_data(info->attrs[MAX_ALLOC]);
 	int ret = -1;
+	struct klua_state *state;
 
-	pr_debug("received NFLMSG_CREATE command\n");
 
-	state = nflua_state_create(xt_lua, cmd->maxalloc, cmd->name);
+	pr_debug("received CREATE_STATE command\n");
+
+	state = net_state_create(klc, *max_alloc, state_name);
 
 	if (state == NULL) {
 		pr_err("could not create new lua state\n");
 		return ret;
 	}
 
-	if ((ret = nflua_get_skb(&oskb, nlh->nlmsg_seq, NFLMSG_CREATE,
-		NFLM_F_DONE, 0, GFP_KERNEL)) < 0) {
+	if ((ret = klua_reply(CREATE_STATE, NLM_F_DONE, 0, GFP_KERNEL, info)) < 0) {
 		pr_err("could not alloc replying packet\n");
 		return ret;
 	}
 
 
 	pr_debug("new state created: %.*s\n",
-		(int)strnlen(cmd->name, NFLUA_NAME_MAXSIZE), cmd->name);
+		(int)strnlen(state_name, KLUA_NAME_MAXSIZE), state_name);
 
-	return kpi_nlmsg_unicast(xt_lua->sock, oskb, nlh->nlmsg_pid);
+	return ret;
 }
 
-static int nflua_destroy_op(struct xt_lua_net *xt_lua, struct sk_buff *skb)
+static int klua_destroy_op(struct klua_communication *klc, struct genl_info *info)
 {
-	struct nlmsghdr *nlh = (struct nlmsghdr *)skb->data;
-	struct nflua_nl_destroy * cmd = nlmsg_data(nlh);
-	struct sk_buff *oskb;
+	char *state_name = nla_data(info->attrs[STATE_NAME]);
 	int ret = -1;
 
-	pr_debug("received NFLMSG_DESTROY command\n");
+	pr_debug("received DESTROY_STATE command\n");
 
 	pr_debug("state: %.*s\n",
-		(int)strnlen(cmd->name, NFLUA_NAME_MAXSIZE), cmd->name);
+		(int)strnlen(state_name, KLUA_NAME_MAXSIZE), state_name);
 
-	if (nflua_state_destroy(xt_lua, cmd->name)) {
+	if (net_state_destroy(klc, state_name)) {
 		pr_err("could not destroy lua state\n");
 		return ret;
 	}
 
-	if ((ret = nflua_get_skb(&oskb, nlh->nlmsg_seq, NFLMSG_DESTROY,
-		NFLM_F_DONE, 0, GFP_KERNEL)) < 0) {
-		pr_err("could not alloc replying packet\n");
+	if ((ret = klua_reply(DESTROY_STATE, NLM_F_DONE, 0, GFP_KERNEL, info)) < 0) {
+		pr_err("could not replying\n");
 		return ret;
 	}
 
-	return kpi_nlmsg_unicast(xt_lua->sock, oskb, nlh->nlmsg_pid);
+	return ret;
 }
+
+#ifndef LUNATIK_UNUSED
 
 static void init_list_hdr(struct list_cursor *lc)
 {
 	struct nlmsghdr *onlh = (struct nlmsghdr *)lc->oskb->data;
-	struct nflua_nl_list *list;
-	struct nflua_nl_fragment *frag;
+	struct klua_nl_list *list;
+	struct klua_nl_fragment *frag;
 
 	if (lc->frag.offset == 0) {
 		list = nlmsg_data(onlh);
@@ -262,7 +347,7 @@ static void init_list_hdr(struct list_cursor *lc)
 		frag->seq = 0;
 
 		lc->frag.state =
-			STATE_OFFSET(list, sizeof(struct nflua_nl_list));
+			STATE_OFFSET(list, sizeof(struct klua_nl_list));
 	} else {
 		frag = nlmsg_data(onlh);
 		frag->seq = (unsigned int)
@@ -270,7 +355,7 @@ static void init_list_hdr(struct list_cursor *lc)
 				/ FRAG_MAX_STATES) + 1;
 
 		lc->frag.state =
-			STATE_OFFSET(frag, sizeof(struct nflua_nl_fragment));
+			STATE_OFFSET(frag, sizeof(struct klua_nl_fragment));
 	}
 
 	frag->offset = lc->frag.offset;
@@ -285,20 +370,20 @@ static int init_list_skb(struct list_cursor *lc)
 	lc->frag.offset = lc->curr;
 
 	if (lc->frag.offset == 0) {
-		skblen = NLMSG_ALIGN(sizeof(struct nflua_nl_list));
+		skblen = NLMSG_ALIGN(sizeof(struct klua_nl_list));
 		flags = NFLM_F_INIT;
 		flags |= (lc->total > INIT_FRAG_MAX_STATES) ? NFLM_F_MULTI : 0;
 		lc->frag.total = min(missing, INIT_FRAG_MAX_STATES);
 	} else {
-		skblen = NLMSG_ALIGN(sizeof(struct nflua_nl_fragment));
+		skblen = NLMSG_ALIGN(sizeof(struct klua_nl_fragment));
 		flags = NFLM_F_MULTI;
 		lc->frag.total = min(missing, FRAG_MAX_STATES);
 	}
 
 	flags |= lc->frag.offset + lc->frag.total >= lc->total ? NFLM_F_DONE : 0;
 
-	skblen += sizeof(struct nflua_nl_state) * lc->frag.total;
-	if ((ret = nflua_get_skb(&(lc->oskb), lc->nlh->nlmsg_seq, NFLMSG_LIST,
+	skblen += sizeof(struct klua_nl_state) * lc->frag.total;
+	if ((ret = klua_reply(&(lc->oskb), lc->nlh->nlmsg_seq, NFLMSG_LIST,
 				 flags, skblen, GFP_KERNEL)) < 0) {
 		return ret;
 	}
@@ -308,19 +393,19 @@ static int init_list_skb(struct list_cursor *lc)
 	return 0;
 }
 
-static void write_state(struct nflua_state *s, struct list_frag *f,
+static void write_state(struct klua_state *s, struct list_frag *f,
 	unsigned short curr)
 {
-	struct nflua_nl_state *nl_state = f->state + curr - f->offset;
-	size_t namelen = strnlen(s->name, NFLUA_NAME_MAXSIZE);
+	struct klua_nl_state *nl_state = f->state + curr - f->offset;
+	size_t namelen = strnlen(s->name, KLUA_NAME_MAXSIZE);
 
-	memset(nl_state, 0, sizeof(struct nflua_nl_state));
+	memset(nl_state, 0, sizeof(struct klua_nl_state));
 	memcpy(&nl_state->name, s->name, namelen);
 	nl_state->maxalloc  = s->maxalloc;
 	nl_state->curralloc = s->curralloc;
 }
 
-static int list_iter(struct nflua_state *state, unsigned short *data)
+static int list_iter(struct klua_state *state, unsigned short *data)
 {
 	struct list_cursor *lc = container_of(data, struct list_cursor, total);
 	struct sk_buff *skb;
@@ -347,11 +432,11 @@ static int list_iter(struct nflua_state *state, unsigned short *data)
 }
 
 
-static int nflua_list_op(struct xt_lua_net *xt_lua, struct sk_buff *skb)
+static int klua_list_op(struct klua_communication *klc, struct sk_buff *skb)
 {
 	int ret;
 	struct list_cursor lcursor = {
-		.sock = xt_lua->sock,
+		.sock = klc->sock,
 		.nlh = (struct nlmsghdr *)skb->data,
 		.oskb = NULL,
 		.frag = {NULL, 0, 0},
@@ -361,7 +446,7 @@ static int nflua_list_op(struct xt_lua_net *xt_lua, struct sk_buff *skb)
 
 	pr_debug("received NFLMSG_LIST command\n");
 
-	ret = nflua_state_list(xt_lua, &list_iter, &lcursor.total);
+	ret = klua_state_list(klc, &list_iter, &lcursor.total);
 	if (ret != 0)
 		goto out;
 
@@ -376,10 +461,13 @@ out:
 	return ret;
 }
 
-static int nflua_doexec(lua_State *L)
+#endif
+
+#ifndef LUNATIK_UNUSED
+static int klua_doexec(lua_State *L)
 {
 	int error;
-	struct nflua_frag_request *req = lua_touserdata(L, 2);
+	struct klua_frag_request *req = lua_touserdata(L, 2);
 
 	lua_pop(L, 1);
 
@@ -402,21 +490,22 @@ static int nflua_doexec(lua_State *L)
 
 	return 0;
 }
+#endif
 
-static int nflua_exec(struct xt_lua_net *xt_lua, u32 pid,
-		struct nflua_client *client)
+static int klua_exec(struct klua_communication *klc, u32 pid,
+		struct klua_client *client)
 {
-	struct nflua_frag_request *req = &client->request;
-	struct nflua_state *s;
+	struct klua_frag_request *req = &client->request;
+	struct klua_state *s;
 	int error = 0;
 	int base;
 
-	if ((s = nflua_state_lookup(xt_lua, client->request.name)) == NULL) {
+	if ((s = net_state_lookup(klc, client->request.name)) == NULL) {
 		pr_err("lua state not found\n");
 		return -ENOENT;
 	}
 
-	if (!nflua_state_get(s)) {
+	if (!klua_state_get(s)) {
 		pr_err("couldn't increment state reference\n");
 		return -ESTALE;
 	}
@@ -430,16 +519,7 @@ static int nflua_exec(struct xt_lua_net *xt_lua, u32 pid,
 
 	base = lua_gettop(s->L);
 
-	if (client->msgtype == NFLMSG_DATA) {
-		lua_pushcfunction(s->L, nflua_doexec);
-		lua_pushinteger(s->L, pid);
-		lua_pushlightuserdata(s->L, req);
-
-		if (luaU_pcall(s->L, 2, 0)) {
-			pr_err("%s\n", lua_tostring(s->L, -1));
-			error = -EIO;
-		}
-	} else if ((error = luaU_dostring(s->L, req->buffer, req->total,
+	if ((error = luaU_dostring(s->L, req->buffer, req->total,
 					  req->script)) != 0) {
 		pr_err("%s\n", lua_tostring(s->L, -1));
 		error = -EIO;
@@ -448,14 +528,14 @@ static int nflua_exec(struct xt_lua_net *xt_lua, u32 pid,
 	lua_settop(s->L, base);
 unlock:
 	spin_unlock_bh(&s->lock);
-	nflua_state_put(s);
+	klua_state_put(s);
 	return error;
 }
 
-static int init_request(struct nflua_client *c, size_t total, bool allocate,
+static int init_request(struct klua_client *c, size_t total, bool allocate,
 		char *buffer)
 {
-	struct nflua_frag_request *request = &c->request;
+	struct klua_frag_request *request = &c->request;
 	int ret = -EPROTO;
 
 	pr_debug("creating client buffer id: %u size: %ld\n", c->pid, total);
@@ -478,7 +558,7 @@ static int init_request(struct nflua_client *c, size_t total, bool allocate,
 	return 0;
 }
 
-static inline void clear_request(struct nflua_client *c)
+static inline void clear_request(struct klua_client *c)
 {
 	if (c != NULL) {
 		pr_debug("clearing client %u request\n", c->pid);
@@ -486,15 +566,15 @@ static inline void clear_request(struct nflua_client *c)
 		if(c->request.release && c->request.buffer != NULL)
 			kfree(c->request.buffer);
 
-		memset(&c->request, 0, sizeof(struct nflua_frag_request));
+		memset(&c->request, 0, sizeof(struct klua_frag_request));
 	}
 }
 
-static int nflua_reassembly(struct nflua_client *client,
-		struct nflua_nl_fragment *frag, size_t len)
+static int klua_reassembly(struct klua_client *client,
+		struct klua_nl_fragment *frag, size_t len)
 {
-	struct nflua_frag_request *request = &client->request;
-	char *p = ((char *)frag) + NLMSG_ALIGN(sizeof(struct nflua_nl_fragment));
+	struct klua_frag_request *request = &client->request;
+	char *p = ((char *)frag) + NLMSG_ALIGN(sizeof(struct klua_nl_fragment));
 
 	if (request->offset + len > request->total) {
 		pr_err("Invalid message. Current offset: %ld\n"
@@ -509,21 +589,20 @@ static int nflua_reassembly(struct nflua_client *client,
 	return 0;
 }
 
-static int nflua_handle_frag(struct xt_lua_net *xt_lua,
-		struct nflua_client *client, struct nlmsghdr *nlh,
-		struct nflua_nl_fragment *frag, size_t datalen)
+static int klua_handle_frag(struct klua_communication *klc,
+		struct klua_client *client, struct nlmsghdr *nlh,
+		struct klua_nl_fragment *frag, size_t datalen, struct genl_info *info)
 {
-	struct sk_buff *oskb;
-	size_t unfragmax = NFLUA_PAYLOAD_SIZE(sizeof(struct nflua_nl_script));
+	size_t unfragmax = KLUA_PAYLOAD_SIZE(sizeof(struct klua_nl_script));
 	int ret;
 
-	if (nlh->nlmsg_flags & NFLM_F_MULTI) {
-		if ((ret = nflua_reassembly(client, frag, datalen)) < 0) {
+	if (nlh->nlmsg_flags & NLM_F_MULTI) {
+		if ((ret = klua_reassembly(client, frag, datalen)) < 0) {
 			pr_err("payload assembly error %d\n", ret);
 			goto out;
 		}
 
-		if (!(nlh->nlmsg_flags & NFLM_F_DONE)) {
+		if (!(nlh->nlmsg_flags & NLM_F_DONE)) {
 			pr_debug("waiting for next fragment\n");
 			return 0;
 		}
@@ -534,70 +613,73 @@ static int nflua_handle_frag(struct xt_lua_net *xt_lua,
 		goto out;
 	}
 
-	if ((ret = nflua_exec(xt_lua, nlh->nlmsg_pid, client)) < 0) {
+	if ((ret = klua_exec(klc, nlh->nlmsg_pid, client)) < 0) {
 		pr_err("could not execute / load data!\n");
 		goto out;
 	}
 
-	if ((ret = nflua_get_skb(&oskb, nlh->nlmsg_seq, NFLMSG_EXECUTE,
-				NFLM_F_DONE, 0, GFP_KERNEL)) < 0) {
+	if ((ret = klua_reply(EXECUTE_CODE, NLM_F_DONE, 0, GFP_KERNEL, info)) < 0) {
 		pr_err("could not alloc replying packet\n");
 		goto out;
 	}
-
-	ret = kpi_nlmsg_unicast(xt_lua->sock, oskb, nlh->nlmsg_pid);
 
 out:
 	clear_request(client);
 	return ret;
 }
 
-static int nflua_execute_op(struct xt_lua_net *xt_lua, struct sk_buff *skb,
-		struct nflua_client *client)
+static int klua_execute_op(struct klua_communication *klc, struct sk_buff *skb,
+		struct klua_client *client, struct genl_info *info)
 {
 	struct nlmsghdr *nlh = (struct nlmsghdr *)skb->data;
-	struct nflua_nl_script *cmd;
-	struct nflua_nl_fragment *frag;
+	struct klua_frag_request req;
+	struct klua_nl_fragment *frag;
+	struct klua_nl_script cmd;
 	size_t datalen;
 
-	pr_debug("received NFLMSG_EXECUTE command\n");
+	req = client->request;
 
-	if (nlh->nlmsg_flags & NFLM_F_INIT) {
+	memcpy(cmd.name  , req.name  , strlen(req.name));
+	memcpy(cmd.script, req.script, strlen(req.script));
+	cmd.frag.seq 	= req.fragseq;
+	cmd.frag.offset = req.offset;
+	cmd.total 		= req.total;
+
+
+	pr_debug("received EXECUTE_CODE command\n");
+
+	if (nlh->nlmsg_flags & NLM_F_INIT) {
 		if (client->request.fragseq != 0) {
 			pr_err("Non expected NFLMSG_EXECUTE init\n");
 			return -EPROTO;
 		}
 
-		cmd = nlmsg_data(nlh);
-		if (cmd->total > NFLUA_SCRIPT_MAXSIZE) {
+		if (cmd.total > KLUA_SCRIPT_MAXSIZE) {
 			pr_err("payload larger than allowed\n");
 			return -EMSGSIZE;
-		} else if (cmd->frag.seq != 0 || cmd->frag.offset != 0) {
+		} else if (cmd.frag.seq != 0 || cmd.frag.offset != 0) {
 			pr_err("invalid NFLMSG_EXECUTE fragment\n");
 			return -EPROTO;
 		}
 
-		frag = &cmd->frag;
+		frag = &cmd.frag;
 		datalen = nlh->nlmsg_len
-			- NLMSG_SPACE(sizeof(struct nflua_nl_script));
+			- NLMSG_SPACE(sizeof(struct klua_nl_script));
 
 		init_request(client,
-			     cmd->total,
-			     cmd->total > NFLUA_SCRIPT_FRAG_SIZE,
+			     cmd.total,
+			     cmd.total > KLUA_SCRIPT_FRAG_SIZE,
 			     ((char *)nlmsg_data(nlh))
-			     + NLMSG_ALIGN(sizeof(struct nflua_nl_script)));
-
-		memcpy(client->request.name, cmd->name, NFLUA_NAME_MAXSIZE);
-		memcpy(client->request.script, cmd->script, NFLUA_SCRIPTNAME_MAXSIZE);
+			     + NLMSG_ALIGN(sizeof(struct klua_nl_script)));
 
 	} else {
 		frag = nlmsg_data(nlh);
 		if ((frag->seq - 1) != client->request.fragseq) {
-			pr_err("NFLMSG_EXECUTE fragment out of order\n");
+			pr_err("EXECUTE_CODE fragment out of order\n");
 			clear_request(client);
 			return -EPROTO;
 		} else if (frag->offset != client->request.offset) {
-			pr_err("Invalid NFLMSG_EXECUTE message."
+			pr_err("Invalid EXECUTE_CODE message."
 			       "Expected offset: %ld but got %d\n",
 				client->request.offset, frag->offset);
 			clear_request(client);
@@ -605,20 +687,22 @@ static int nflua_execute_op(struct xt_lua_net *xt_lua, struct sk_buff *skb,
 		}
 
 		datalen = nlh->nlmsg_len
-			- NLMSG_SPACE(sizeof(struct nflua_nl_fragment));
+			- NLMSG_SPACE(sizeof(struct klua_nl_fragment));
 
 		client->request.fragseq++;
 	}
 
-	return nflua_handle_frag(xt_lua, client, nlh, frag, datalen);
+	return klua_handle_frag(klc, client, nlh, frag, datalen, info);
 }
 
-static int nflua_data_op(struct xt_lua_net *xt_lua, struct sk_buff *skb,
-		struct nflua_client *client)
+#ifndef LUNATIK_UNUSED
+
+static int klua_data_op(struct klua_communication *klc, struct sk_buff *skb,
+		struct klua_client *client)
 {
 	struct nlmsghdr *nlh = (struct nlmsghdr *)skb->data;
-	struct nflua_nl_data *cmd = nlmsg_data(nlh);
-	size_t mlen = nlh->nlmsg_len - NLMSG_SPACE(sizeof(struct nflua_nl_data));
+	struct klua_nl_data *cmd = nlmsg_data(nlh);
+	size_t mlen = nlh->nlmsg_len - NLMSG_SPACE(sizeof(struct klua_nl_data));
 	int ret;
 
 	pr_debug("received NFLMSG_DATA command\n");
@@ -628,175 +712,208 @@ static int nflua_data_op(struct xt_lua_net *xt_lua, struct sk_buff *skb,
 		return -EPROTO;
 	}
 
-	if (cmd->total > NFLUA_DATA_MAXSIZE || cmd->total != mlen) {
+	if (cmd->total > KLUA_DATA_MAXSIZE || cmd->total != mlen) {
 		pr_err("invalid payload size\n");
 		return -EMSGSIZE;
 	}
 
 	init_request(client, cmd->total, false,
-		((char *)cmd) + NLMSG_ALIGN(sizeof(struct nflua_nl_data)));
+		((char *)cmd) + NLMSG_ALIGN(sizeof(struct klua_nl_data)));
 
-	memcpy(client->request.name, cmd->name, NFLUA_NAME_MAXSIZE);
+	memcpy(client->request.name, cmd->name, KLUA_NAME_MAXSIZE);
 
-	if ((ret = nflua_exec(xt_lua, nlh->nlmsg_pid, client)) < 0)
+	if ((ret = klua_exec(klc, nlh->nlmsg_pid, client)) < 0)
 		pr_err("could not execute / load data!\n");
 
 	clear_request(client);
 	return ret;
 }
 
-static inline int nflua_unknown_op(struct sk_buff *skb)
+static inline int klua_unknown_op(struct sk_buff *skb)
 {
 	struct nlmsghdr *nlh = (struct nlmsghdr *)skb->data;
 	pr_err("received UNKNOWN command type %d\n", nlh->nlmsg_type);
 	return -1;
 }
 
-static void nflua_handle_error(struct xt_lua_net *xt_lua, struct sk_buff *skb)
-{
-	struct nlmsghdr *nlh = (struct nlmsghdr *)skb->data;
-	struct sk_buff *oskb;
+#endif /* LUNATIK_UNUSED */
 
+static void klua_handle_error(u16 type, struct genl_info *info)
+{
 	pr_debug("NFLua replying with error\n");
 
-	if (nflua_get_skb(&oskb, nlh->nlmsg_seq, NLMSG_ERROR,
-				0, 0, GFP_KERNEL) < 0) {
+	if (klua_reply(type, NLM_F_ERR, 0, GFP_KERNEL, info) < 0) {
 		pr_err("could not alloc replying packet\n");
 		return;
 	}
-
-	if (kpi_nlmsg_unicast(xt_lua->sock, oskb, nlh->nlmsg_pid) < 0)
-		pr_err("could not send error replying packet\n");
 }
 
-
-static void nflua_netlink_input(struct sk_buff *skb)
-{
-	struct net *net = sock_net(skb->sk); /*Obtem o socket respectivo àquele namespace*/
-	struct xt_lua_net *xt_lua = xt_lua_pernet(net);
-	struct nlmsghdr *nlh = NULL;
-	struct nflua_client *client;
-	int result = -1;
-
-	pr_debug("received netlink packet\n");
-	if (skb == NULL) {
-		pr_err("skb is NULL\n");
-		return;
-	}
-
-	if (!kpi_ns_capable(net->user_ns, CAP_NET_ADMIN)) {
-		pr_err("operation not permitted\n");
-		return;
-	}
-
-	nlh = (struct nlmsghdr *)skb->data;
-	if ((client = client_find_or_create(xt_lua, nlh->nlmsg_pid)) == NULL) {
-		pr_err("could not find or allocate client data\n");
-		return;
-	}
-
-	mutex_lock(&client->lock);
-	if (client->seq == 0 || client->seq + 1 == nlh->nlmsg_seq) {
-		client->seq = nlh->nlmsg_seq;
-		client->msgtype = nlh->nlmsg_type;
-		clear_request(client);
-	} else if (client->seq != nlh->nlmsg_seq ||
-			!(nlh->nlmsg_flags & NFLM_F_MULTI)){
-		pr_err("netlink protocol out of sync\n");
-		goto out;
-	}
-
-	switch (nlh->nlmsg_type) {
-	case NFLMSG_CREATE:
-		result = nflua_create_op(xt_lua, skb);
-		break;
-	case NFLMSG_DESTROY:
-		result = nflua_destroy_op(xt_lua, skb);
-		break;
-	case NFLMSG_LIST:
-		result = nflua_list_op(xt_lua, skb);
-		break;
-	case NFLMSG_EXECUTE:
-		result = nflua_execute_op(xt_lua, skb, client);
-		break;
-	case NFLMSG_DATA:
-		result = nflua_data_op(xt_lua, skb, client);
-		break;
-	default:
-		result = nflua_unknown_op(skb);
-	}
-
-out:
-	if (result < 0)
-		nflua_handle_error(xt_lua, skb);
-
-	mutex_unlock(&client->lock);
-}
+#ifndef LUNATIK_UNUSED
 
 struct urelease_work {
 	struct	work_struct w;
 	u32	portid;
-	struct  xt_lua_net *xt_lua;
+	struct  klua_communication *klc;
 };
 
-static void nflua_urelease_event_work(struct work_struct *work)
+static void klua_urelease_event_work(struct work_struct *work)
 {
 	struct urelease_work *w = container_of(work, struct urelease_work, w);
 
 	pr_debug("release client with pid %u\n", w->portid);
-	client_destroy(w->xt_lua, w->portid);
+	client_destroy(w->klc, w->portid);
 
 	kfree(w);
 }
 
-int nflua_rcv_nl_event(struct notifier_block *this,
-				 unsigned long event, void *p)
+#endif /* LUNATIK_UNUSED */
+
+static int klua_create_state(struct sk_buff *buff, struct genl_info *info)
 {
-	struct netlink_notify *n = p;
-	struct urelease_work *w;
+	struct klua_client *client;
+	int err;
+	struct net *net;
+	struct klua_communication *klc;
 
-	if (event != NETLINK_URELEASE || n->protocol != NETLINK_NFLUA)
-		return NOTIFY_DONE;
+	err = -1;
 
-	pr_debug("NETLINK_URELEASE event from id %u\n",
-		kpi_netlink_notify_portid(n));
+	pr_debug("received a signal to create a state\n");
 
-	if ((w = kmalloc(sizeof(*w), GFP_ATOMIC)) == NULL) {
-		pr_err("could not alloc notify work\n");
-		return NOTIFY_DONE;
+	if ((net = genl_info_net(info)) == NULL) {
+		pr_err("Error getting net namespace\n");
+		return err;
 	}
 
-	INIT_WORK((struct work_struct *) w, nflua_urelease_event_work);
-	w->portid = kpi_netlink_notify_portid(n);
-	w->xt_lua = xt_lua_pernet(n->net);
-	schedule_work((struct work_struct *) w);
+	if ((klc = klua_pernet(net)) == NULL) {
+		pr_err("Error getting private data from namespace\n");
+		return err;
+	}
 
-	return NOTIFY_DONE;
+	if (buff == NULL)
+		return err;
+
+	if ((client = client_find_or_create(klc, info->snd_portid)) == NULL){
+		pr_err("Fail to find or create a client\n");
+		return err;
+	}
+
+	mutex_lock(&client->lock);
+
+	err = klua_create_op(klc, info);
+	if (err < 0)
+		klua_handle_error(CREATE_STATE, info);
+
+	mutex_unlock(&client->lock);
+
+	return err;
 }
 
-int nflua_netlink_init(struct xt_lua_net *xt_lua, struct net *net)
+static int klua_list_states(struct sk_buff *buff, struct genl_info *info)
 {
-        kpi_netlink_kernel_cfg cfg = {
-		.groups = 0,
-		.input = nflua_netlink_input
-	};
-	int i;
+	return 0;
+}
 
-	xt_lua->sock = kpi_netlink_kernel_create(net, NETLINK_NFLUA, &cfg);
-	if (xt_lua->sock == NULL)
-	    return -1;
+static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
+{
+	char *state_name;
+	char *code_frag;
+	char *script_name;
+	u32 frag_seq;
+	u32 frag_off;
+	u32 script_size;
 
-	spin_lock_init(&xt_lua->client_lock);
+	struct klua_client *client;
+	struct klua_frag_request req;
+	int err;
+	struct net *net;
+	struct klua_communication *klc;
 
-	hash_random = kpi_get_random_u32();
-	for (i = 0; i < XT_LUA_HASH_BUCKETS; i++)
-		INIT_HLIST_HEAD(&xt_lua->client_table[i]);
+	err = -1;
+
+	pr_debug("received a signal to execute an code\n");
+
+	if ((net = genl_info_net(info)) == NULL) {
+		pr_err("Error getting net namespace\n");
+		return err;
+	}
+
+	if ((klc = klua_pernet(net)) == NULL) {
+		pr_err("Error getting private data from namespace\n");
+		return err;
+	}
+
+	if (buff == NULL)
+		return err;
+
+	if ((client = client_find_or_create(klc, info->snd_portid)) == NULL) {
+		pr_err("Fail to find or create a client\n");
+		return err;
+	}
+
+	state_name = nla_data(info->attrs[STATE_NAME]);
+	code_frag  = nla_data(info->attrs[LUA_CODE]);
+	script_name= nla_data(info->attrs[SCRIPT_NAME]);
+	frag_seq   = *((u32 *)nla_data(info->attrs[FRAG_SEQ]));
+	frag_off   = *((u32 *)nla_data(info->attrs[FRAG_OFFSET]));
+	script_size= *((u32 *)nla_data(info->attrs[SCRIPT_SIZE]));
+
+
+	memcpy(req.name, state_name, strlen(state_name));
+	memcpy(req.buffer, code_frag, strlen(code_frag));
+	memcpy(req.script, script_name, strlen(script_name));
+	req.fragseq= frag_seq;
+	req.offset = frag_off;
+	req.total  = script_size;
+
+	client->request = req;
+
+	if ((err = klua_execute_op(klc, buff, client, info)))
+		return err;
 
 	return 0;
 }
 
-void nflua_netlink_exit(struct xt_lua_net *xt_lua)
+static int klua_destroy_state(struct sk_buff *buff, struct genl_info *info)
 {
-	if (xt_lua->sock != NULL)
-		netlink_kernel_release(xt_lua->sock);
+	struct klua_client *client;
+	int err;
+	struct net *net = genl_info_net(info);
+	struct klua_communication *klc = klua_pernet(net);
+
+	err = -1;
+
+	pr_debug("received a signal to destroy a state\n");
+
+	if ((net = genl_info_net(info)) == NULL) {
+		pr_err("Error getting net namespace\n");
+		return err;
+	}
+
+	if ((klc = klua_pernet(net)) == NULL) {
+		pr_err("Error getting private data from namespace\n");
+		return err;
+	}
+
+	if (buff == NULL)
+		return err;
+
+	if ((client = client_find_or_create(klc, info->snd_portid)) == NULL){
+		pr_err("Fail to find or create a client\n");
+		return err;
+	}
+
+	mutex_lock(&client->lock);
+
+	err = klua_destroy_op(klc, info);
+	if (err < 0)
+		klua_handle_error(DESTROY_STATE, info);
+
+	mutex_unlock(&client->lock);
+
+	return err;
+}
+
+static int klua_destroy_all_states(struct sk_buff *buff, struct genl_info *info)
+{
+	return 0;
 }
