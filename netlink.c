@@ -500,6 +500,8 @@ static int klua_exec(struct klua_communication *klc, u32 pid,
 	int error = 0;
 	int base;
 
+	pr_debug("Estou procurando pelo estado:%s\n", client->request.name);
+
 	if ((s = net_state_lookup(klc, client->request.name)) == NULL) {
 		pr_err("lua state not found\n");
 		return -ENOENT;
@@ -636,15 +638,14 @@ static int klua_execute_op(struct klua_communication *klc, struct sk_buff *skb,
 	struct klua_nl_fragment *frag;
 	struct klua_nl_script cmd;
 	size_t datalen;
+	char *lua_code;
 
 	req = client->request;
 
-	memcpy(cmd.name  , req.name  , strlen(req.name));
-	memcpy(cmd.script, req.script, strlen(req.script));
 	cmd.frag.seq 	= req.fragseq;
 	cmd.frag.offset = req.offset;
 	cmd.total 		= req.total;
-
+	lua_code = (char *) nla_data(info->attrs[LUA_CODE]);
 
 	pr_debug("received EXECUTE_CODE command\n");
 
@@ -669,8 +670,7 @@ static int klua_execute_op(struct klua_communication *klc, struct sk_buff *skb,
 		init_request(client,
 			     cmd.total,
 			     cmd.total > KLUA_SCRIPT_FRAG_SIZE,
-			     ((char *)nlmsg_data(nlh))
-			     + NLMSG_ALIGN(sizeof(struct klua_nl_script)));
+			     lua_code);
 
 	} else {
 		frag = nlmsg_data(nlh);
@@ -816,7 +816,6 @@ static int klua_list_states(struct sk_buff *buff, struct genl_info *info)
 static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 {
 	char *state_name;
-	char *code_frag;
 	char *script_name;
 	u32 frag_seq;
 	u32 frag_off;
@@ -850,20 +849,18 @@ static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 		return err;
 	}
 
-	state_name = nla_data(info->attrs[STATE_NAME]);
-	code_frag  = nla_data(info->attrs[LUA_CODE]);
-	script_name= nla_data(info->attrs[SCRIPT_NAME]);
+	state_name = (char  *)nla_data(info->attrs[STATE_NAME]);
+	script_name= (char  *)nla_data(info->attrs[SCRIPT_NAME]);
 	frag_seq   = *((u32 *)nla_data(info->attrs[FRAG_SEQ]));
 	frag_off   = *((u32 *)nla_data(info->attrs[FRAG_OFFSET]));
 	script_size= *((u32 *)nla_data(info->attrs[SCRIPT_SIZE]));
 
-
-	memcpy(req.name, state_name, strlen(state_name));
-	memcpy(req.buffer, code_frag, strlen(code_frag));
-	memcpy(req.script, script_name, strlen(script_name));
+	strcpy(req.name, state_name);
+	strncpy(req.script, script_name, strlen(script_name));
 	req.fragseq= frag_seq;
 	req.offset = frag_off;
 	req.total  = script_size;
+	req.buffer = NULL;
 
 	client->request = req;
 

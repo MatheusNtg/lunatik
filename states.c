@@ -314,7 +314,7 @@ struct klua_state *net_state_lookup(struct klua_communication *klc, const char *
 struct klua_state *net_state_create(struct klua_communication *klc, size_t maxalloc, const char *name)
 {
 
-	struct klua_state *s = net_state_lookup(klc,name);
+	struct klua_state *s = net_state_lookup(klc, name);
 	int namelen = strnlen(name, KLUA_NAME_MAXSIZE);
 	
 	pr_debug("creating state: %.*s maxalloc: %zd\n", namelen, name,
