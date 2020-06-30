@@ -64,8 +64,9 @@ enum {
 	CREATE_STATE = 16,	     /* KLua create state msg type      */
 	DESTROY_STATE,           /* KLua destroy state msg type     */
 	LIST_STATES,             /* KLua list states msg type       */
-	EXECUTE_CODE,            /* KLua execute states msg type    */
+	EXECUTE_CODE,            /* KLua execute code msg type      */
 	DESTROY_ALL_STATES,      /* KLua destroy all states msg type*/
+	EXECUTE_FRAG			 /* KLua execute fragment msg type  */
 };
 
 enum attributes_ids{
@@ -83,9 +84,9 @@ enum attributes_ids{
 /* KLua netlink header flags */
 #define NLM_F_REQUEST 	0x01	  /* A request message             */
 #define NLM_F_MULTI 	0x02	  /* Multipart message             */
-#define NLM_F_DONE		0x04	  /* Last message                  */
 #define NLM_F_INIT		0x08	  /* First message                 */
-#define NLM_F_ERR		0x0F	  /* A error msg*/
+#define NLM_F_DONE		0x20	  /* Last message                  */
+#define NLM_F_ERR		0xFF	  /* A error msg*/
 
 #define KLUA_MIN_ALLOC_BYTES (32 * 1024UL)
 

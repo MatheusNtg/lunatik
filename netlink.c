@@ -25,6 +25,7 @@
 #include <linux/slab.h>
 #include <linux/hashtable.h>
 #include <linux/jhash.h>
+#include <linux/netlink.h>
 #include <net/sock.h>
 
 #include "luautil.h"
@@ -58,6 +59,7 @@ struct nla_policy const l_policy[ATTR_COUNT] = {
 static int klua_create_state(struct sk_buff *buff, struct genl_info *info);
 static int klua_list_states(struct sk_buff *buff, struct genl_info *info);
 static int klua_execute_code(struct sk_buff *buff, struct genl_info *info);
+static int klua_execute_frag(struct sk_buff *buff, struct genl_info *info);
 static int klua_destroy_state(struct sk_buff *buff, struct genl_info *info);
 static int klua_destroy_all_states(struct sk_buff *buff, struct genl_info *info);
 
@@ -87,6 +89,13 @@ static const struct genl_ops l_ops[] = {
 	{
 		.cmd    = DESTROY_STATE,
 		.doit   = klua_destroy_state,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		.policy = l_policy
+#endif
+	},
+	{
+		.cmd    = EXECUTE_FRAG,
+		.doit   = klua_execute_frag,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
 		.policy = l_policy
 #endif
@@ -521,6 +530,8 @@ static int klua_exec(struct klua_communication *klc, u32 pid,
 
 	base = lua_gettop(s->L);
 
+	pr_debug("Tentando executar: %s\n", req->buffer);
+
 	if ((error = luaU_dostring(s->L, req->buffer, req->total,
 					  req->script)) != 0) {
 		pr_err("%s\n", lua_tostring(s->L, -1));
@@ -571,12 +582,13 @@ static inline void clear_request(struct klua_client *c)
 		memset(&c->request, 0, sizeof(struct klua_frag_request));
 	}
 }
-
+//klua_reassembly(client, frag, datalen)
 static int klua_reassembly(struct klua_client *client,
 		struct klua_nl_fragment *frag, size_t len)
 {
 	struct klua_frag_request *request = &client->request;
-	char *p = ((char *)frag) + NLMSG_ALIGN(sizeof(struct klua_nl_fragment));
+	char *p = request->buffer + request->offset;
+
 
 	if (request->offset + len > request->total) {
 		pr_err("Invalid message. Current offset: %ld\n"
@@ -591,10 +603,12 @@ static int klua_reassembly(struct klua_client *client,
 	return 0;
 }
 
+//klua_handle_frag(klc, client, nlh, frag, datalen, info)
 static int klua_handle_frag(struct klua_communication *klc,
 		struct klua_client *client, struct nlmsghdr *nlh,
 		struct klua_nl_fragment *frag, size_t datalen, struct genl_info *info)
 {
+	//TODO Ver o que esse unfragmax significa depois
 	size_t unfragmax = KLUA_PAYLOAD_SIZE(sizeof(struct klua_nl_script));
 	int ret;
 
@@ -605,6 +619,7 @@ static int klua_handle_frag(struct klua_communication *klc,
 		}
 
 		if (!(nlh->nlmsg_flags & NLM_F_DONE)) {
+			klua_reply(EXECUTE_CODE, NLM_F_MULTI, 0, GFP_KERNEL, info);
 			pr_debug("waiting for next fragment\n");
 			return 0;
 		}
@@ -633,6 +648,8 @@ out:
 static int klua_execute_op(struct klua_communication *klc, struct sk_buff *skb,
 		struct klua_client *client, struct genl_info *info)
 {
+	u32 *fragseq;
+	u32 *offset;
 	struct nlmsghdr *nlh = (struct nlmsghdr *)skb->data;
 	struct klua_frag_request req;
 	struct klua_nl_fragment *frag;
@@ -664,16 +681,25 @@ static int klua_execute_op(struct klua_communication *klc, struct sk_buff *skb,
 		}
 
 		frag = &cmd.frag;
-		datalen = nlh->nlmsg_len
-			- NLMSG_SPACE(sizeof(struct klua_nl_script));
+		datalen = strlen(lua_code);
 
 		init_request(client,
 			     cmd.total,
 			     cmd.total > KLUA_SCRIPT_FRAG_SIZE,
 			     lua_code);
 
+		memcpy(client->request.name, cmd.name, KLUA_NAME_MAXSIZE);
+		memcpy(client->request.script, cmd.script, KLUA_SCRIPTNAME_MAXSIZE);
+
 	} else {
-		frag = nlmsg_data(nlh);
+		frag = (struct klua_nl_fragment*) kzalloc(sizeof(struct klua_nl_fragment), GFP_ATOMIC);
+
+		fragseq = (u32 *) nla_data(info->attrs[FRAG_SEQ]);
+		offset  = (u32 *) nla_data(info->attrs[FRAG_OFFSET]);
+
+		frag->seq = *fragseq;
+		frag->offset = *offset;
+
 		if ((frag->seq - 1) != client->request.fragseq) {
 			pr_err("EXECUTE_CODE fragment out of order\n");
 			clear_request(client);
@@ -686,8 +712,7 @@ static int klua_execute_op(struct klua_communication *klc, struct sk_buff *skb,
 			return -EMSGSIZE;
 		}
 
-		datalen = nlh->nlmsg_len
-			- NLMSG_SPACE(sizeof(struct klua_nl_fragment));
+		datalen = strlen(lua_code);
 
 		client->request.fragseq++;
 	}
@@ -830,6 +855,7 @@ static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 	err = -1;
 
 	pr_debug("received a signal to execute an code\n");
+	pr_debug("Receiveid %d bytes from user-space\n", genlmsg_len(info->genlhdr));
 
 	if ((net = genl_info_net(info)) == NULL) {
 		pr_err("Error getting net namespace\n");
@@ -866,6 +892,41 @@ static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 
 	if ((err = klua_execute_op(klc, buff, client, info)))
 		return err;
+
+	return 0;
+}
+
+static int klua_execute_frag(struct sk_buff *buff, struct genl_info *info)
+{
+	struct klua_client *client;
+	int err;
+	struct net *net;
+	struct klua_communication *klc;
+
+	err = -1;
+
+	pr_debug("received a signal to execute an frag\n");
+	pr_debug("Receiveid %d bytes from user-space\n", genlmsg_len(info->genlhdr));
+
+	if ((net = genl_info_net(info)) == NULL) {
+		pr_err("Error getting net namespace\n");
+		return err;
+	}
+
+	if ((klc = klua_pernet(net)) == NULL) {
+		pr_err("Error getting private data from namespace\n");
+		return err;
+	}
+
+	if (buff == NULL)
+		return err;
+
+	if ((client = client_find_or_create(klc, info->snd_portid)) == NULL) {
+		pr_err("Fail to find or create a client\n");
+		return err;
+	}
+
+	klua_execute_op(klc, buff, client, info);
 
 	return 0;
 }

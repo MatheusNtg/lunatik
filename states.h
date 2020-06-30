@@ -25,8 +25,7 @@
 #define KLUA_NAME_MAXSIZE 64
 #define KLUA_MAX_BCK_COUNT 32
 
-struct klua_communication
-{
+struct klua_communication {
 	struct hlist_head states_table[KLUA_MAX_BCK_COUNT];
 	struct hlist_head clients_table[KLUA_MAX_BCK_COUNT];
 	spinlock_t client_lock;
