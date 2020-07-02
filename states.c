@@ -41,7 +41,7 @@ static struct klua_communication klc;
 static inline int name_hash(void *salt, const char *name)
 {
 	int len = strnlen(name, KLUA_NAME_MAXSIZE);
-	return full_name_hash(salt, name, len) & (KLUA_MAX_BCK_COUNT - 1);
+	return full_name_hash(salt, name, len) & (KLUA_HASH_BUCKETS - 1);
 }
 
 struct klua_state *klua_state_lookup(const char *name)
@@ -137,7 +137,7 @@ struct klua_state *klua_state_create(size_t maxalloc, const char *name)
 		return NULL;
 	}
 
-	if (atomic_read(&(klc.states_count)) >= KLUA_MAX_BCK_COUNT) {
+	if (atomic_read(&(klc.states_count)) >= KLUA_HASH_BUCKETS) {
 		pr_err("could not allocate id for state %.*s\n", namelen, name);
 		pr_err("max states limit reached or out of memory\n");
 		return NULL;
@@ -325,7 +325,7 @@ struct klua_state *net_state_create(struct klua_communication *klc, size_t maxal
 		return NULL;
 	}
 
-	if (atomic_read(&(klc->states_count)) >= KLUA_MAX_BCK_COUNT) {
+	if (atomic_read(&(klc->states_count)) >= KLUA_HASH_BUCKETS) {
 		pr_err("could not allocate id for state %.*s\n", namelen, name);
 		pr_err("max states limit reached or out of memory\n");
 		return NULL;

@@ -23,11 +23,12 @@
 #include "lua/lua.h"
 
 #define KLUA_NAME_MAXSIZE 64
-#define KLUA_MAX_BCK_COUNT 32
+#define KLUA_HASH_BUCKETS 32
+#define KLUA_MIN_ALLOC_BYTES (32 * 1024UL)
 
 struct klua_communication {
-	struct hlist_head states_table[KLUA_MAX_BCK_COUNT];
-	struct hlist_head clients_table[KLUA_MAX_BCK_COUNT];
+	struct hlist_head states_table [KLUA_HASH_BUCKETS];
+	struct hlist_head clients_table [KLUA_HASH_BUCKETS];
 	spinlock_t client_lock;
 	spinlock_t statestable_lock;
 	spinlock_t rfcnt_lock;

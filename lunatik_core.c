@@ -188,7 +188,7 @@ static int klua_net_id __read_mostly;
 
 struct klua_communication *klua_pernet(struct net *net)
 {
-	return net_generic(net,klua_net_id);
+	return (struct klua_communication *)net_generic(net,klua_net_id);
 }
 
 static int __net_init klua_net_init(struct net *net)
@@ -196,8 +196,6 @@ static int __net_init klua_net_init(struct net *net)
 	struct klua_communication *klc = klua_pernet(net);
 	
 	net_states_init(klc);
-
-	
 	
 	return 0;
 }
