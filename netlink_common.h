@@ -11,11 +11,13 @@ extern struct genl_family lunatik_family;
 
 enum lunatik_operations {
 	CREATE_STATE,
+	EXECUTE_CODE,
 };
 
 enum lunatik_attrs {
 	STATE_NAME = 1,
 	MAX_ALLOC,
+	CODE,
 	ATTRS_COUNT
 #define ATTRS_MAX (ATTRS_COUNT - 1)
 };

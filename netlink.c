@@ -35,16 +35,26 @@
 extern struct klua_communication *klua_pernet(struct net *net);
 
 static int klua_create_state(struct sk_buff *buff, struct genl_info *info);
+static int klua_execute_code(struct sk_buff *buff, struct genl_info *info);
 
 struct nla_policy lunatik_policy[ATTRS_COUNT] = {
 	[STATE_NAME] = { .type = NLA_STRING },
 	[MAX_ALLOC]  = { .type = NLA_U32 },
+	[CODE]		 = { .type = NLA_STRING }
 };
 
 static const struct genl_ops l_ops[] = {
 	{
 		.cmd    = CREATE_STATE,
 		.doit   = klua_create_state,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		/*Before kernel 5.2.0, each operation has its own policy*/
+		.policy = lunatik_policy
+#endif
+	},
+	{
+		.cmd    = EXECUTE_CODE,
+		.doit   = klua_execute_code,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
 		/*Before kernel 5.2.0, each operation has its own policy*/
 		.policy = lunatik_policy
@@ -65,81 +75,9 @@ struct genl_family lunatik_family = {
 	.n_ops   = ARRAY_SIZE(l_ops),
 };
 
-struct klua_client {
-	struct hlist_node node;
-	struct mutex lock;
-	u32 pid;
-	u32 seq;
-	u16 msgtype;
-};
-
-static u32 hash_random __read_mostly;
-
-#define pid_hash(pid) (jhash_1word(pid, hash_random) & (KLUA_HASH_BUCKETS - 1))
-
-static struct klua_client *client_lookup(struct klua_communication *klc, u32 pid)
-{
-	struct klua_client *client;
-
-	if (unlikely(klc == NULL))
-		return NULL;
-
-	hash_for_each_possible_rcu(klc->clients_table, client, node, pid_hash(pid)){
-		if (client->pid == pid)
-			return client;
-	}
-	return NULL;
-}
-
-static struct klua_client *client_create(struct klua_communication *klc, u32 pid)
-{
-	struct klua_client *client;
-
-	if (unlikely(klc == NULL))
-		return NULL;
-
-	if ((client = kzalloc(sizeof(struct klua_client), GFP_ATOMIC)) == NULL)
-		return NULL;
-
-	mutex_init(&client->lock);
-	client->pid = pid;
-	hash_add_rcu(klc->clients_table, &client->node, pid_hash(pid));
-
-	return client;
-}
-
-static inline struct klua_client *client_find_or_create(
-		struct klua_communication *klc, u32 pid)
-{
-	struct klua_client *client = client_lookup(klc, pid);
-	if (client == NULL)
-		client = client_create(klc, pid);
-	return client;
-}
-// TODO Arrumar essa função
-#ifndef LUNATIK_UNUSED
-static void client_destroy(struct klua_communication *klc, u32 pid)
-{
-	struct klua_client *client = client_lookup(klc, pid);
-
-	if (unlikely(client == NULL))
-		return;
-
-	hlist_del_rcu(&client->node);
-
-	mutex_lock(&client->lock);
-	if (client->request.release && client->request.buffer != NULL)
-		kfree(client->request.buffer);
-	mutex_unlock(&client->lock);
-
-	kfree(client);
-}
-#endif
-
 static int klua_create_state(struct sk_buff *buff, struct genl_info *info)
 {
 	struct klua_communication *klc;
-	struct klua_client *client;
 	char *state_name;
 	u32 *max_alloc;
 	u32 pid;
@@ -151,19 +89,43 @@ static int klua_create_state(struct sk_buff *buff, struct genl_info *info)
 	max_alloc = (u32 *)nla_data(info->attrs[MAX_ALLOC]);
 	pid = info->snd_portid;
 
-	if ((client = client_find_or_create(klc, pid)) == NULL) {
-		pr_err("Failed to create an client while try to create an state\n");
-		return 0;
-	}
-
-	mutex_lock(&client->lock);
 	net_state_create(klc, *max_alloc, state_name);
-	mutex_unlock(&client->lock);
 
 	return 0;
 }
 
+static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
+{
+	struct klua_state *s;
+	char *script;
+	char *state_name;
+	struct klua_communication *klc;
 
+	pr_debug("Received a EXECUTE_CODE message\n");
+
+	klc = klua_pernet(genl_info_net(info));
+	state_name = (char *)nla_data(info->attrs[STATE_NAME]);
+	script = (char *)nla_data(info->attrs[CODE]);
+
+	if ((s = net_state_lookup(klc, state_name)) == NULL) {
+		pr_err("Error finding klua state\n");
+		return 0;
+	}
+
+	if (!klua_state_get(s)) {
+		pr_err("Error getting state\n");
+		return 0;
+	}
+
+	spin_lock_bh(&s->lock);
+	
+	luaL_dostring(s->L, script);
+
+	spin_unlock_bh(&s->lock);
+	klua_state_put(s);
+
+	return 0;
+}
 
 
 
