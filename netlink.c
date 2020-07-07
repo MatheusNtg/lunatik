@@ -32,6 +32,8 @@
 #include "states.h"
 #include "netlink_common.h"
 
+static char *buffer;
+
 extern struct klua_communication *klua_pernet(struct net *net);
 
 static int klua_create_state(struct sk_buff *buff, struct genl_info *info);
@@ -40,7 +42,10 @@ static int klua_execute_code(struct sk_buff *buff, struct genl_info *info);
 struct nla_policy lunatik_policy[ATTRS_COUNT] = {
 	[STATE_NAME] = { .type = NLA_STRING },
 	[MAX_ALLOC]  = { .type = NLA_U32 },
-	[CODE]		 = { .type = NLA_STRING }
+	[CODE]		 = { .type = NLA_STRING },
+	[FLAGS] 	 = { .type = NLA_U8 },
+	[SCRIPT_SIZE]= { .type = NLA_U32 }, //TODO Ver se eu preciso realmente desse tamanho, e decidir qual vai ser o tamanho máximo (de arquivo) suportado pela API
+	[FRAG_COUNT] = { .type = NLA_U8}
 };
 
 static const struct genl_ops l_ops[] = {
@@ -93,36 +98,56 @@ static int klua_create_state(struct sk_buff *buff, struct genl_info *info)
 
 	return 0;
 }
-
 static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 {
 	struct klua_state *s;
-	char *script;
-	char *state_name;
 	struct klua_communication *klc;
+	char *fragment;
+	char *state_name;
+	u8 count;
+	u8 flags;
 
 	pr_debug("Received a EXECUTE_CODE message\n");
 
 	klc = klua_pernet(genl_info_net(info));
 	state_name = (char *)nla_data(info->attrs[STATE_NAME]);
-	script = (char *)nla_data(info->attrs[CODE]);
+	fragment = (char *)nla_data(info->attrs[CODE]);
+	flags = *((u8*)nla_data(info->attrs[FLAGS]));
 
 	if ((s = net_state_lookup(klc, state_name)) == NULL) {
 		pr_err("Error finding klua state\n");
 		return 0;
 	}
 
-	if (!klua_state_get(s)) {
-		pr_err("Error getting state\n");
-		return 0;
+	if ((flags & KLUA_INIT) && (s->status == FREE)) {
+		pr_info("Estou inicializando as variáveis necessárias\n");
+		s->curr_script_size = *((u32*)nla_data(info->attrs[SCRIPT_SIZE]));
+		s->status = RECEIVING;
+	
+		if ((buffer = kmalloc(s->curr_script_size, GFP_KERNEL)) == NULL) {
+			pr_err("Falha ao alocar\n");
+			return 0;
+		}
+	} // TODO Otherwise, reply with a "busy state"
+
+	if ((flags & KLUA_MULTIPART_MSG) && (s->status == RECEIVING)) {
+		count = *((u8 *)nla_data(info->attrs[FRAG_COUNT]));
+		memcpy(buffer + (count * KLUA_MAX_SCRIPT_SIZE), fragment, strlen(fragment));
 	}
 
-	spin_lock_bh(&s->lock);
-	
-	luaL_dostring(s->L, script);
 
-	spin_unlock_bh(&s->lock);
-	klua_state_put(s);
+	if ((flags & KLUA_LAST_MSG) && (s->status == RECEIVING)){
+		pr_info("Recebi a última mensagem\n");
+		count = *((u8 *)nla_data(info->attrs[FRAG_COUNT]));
+
+		memcpy(buffer + (count * KLUA_MAX_SCRIPT_SIZE), fragment, strlen(fragment));
+
+
+		luaL_dostring(s->L, buffer);
+		s->status = FREE;	
+		kfree(buffer);
+	}
+	
 
 	return 0;
 }

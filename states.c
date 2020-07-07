@@ -115,7 +115,7 @@ static int state_init(struct klua_state *s)
 
 	luaU_setenv(s->L, s, struct klua_state);
 	luaL_openlibs(s->L);
-
+	s->status = FREE;
 	/* fixes an issue where the Lua's GC enters a vicious cycle.
 	 * more info here: https://marc.info/?l=lua-l&m=155024035605499&w=2
 	 */

@@ -26,6 +26,11 @@
 #define KLUA_HASH_BUCKETS 32
 #define KLUA_MIN_ALLOC_BYTES (32 * 1024UL)
 
+typedef enum {
+	FREE,
+	RECEIVING,
+} klua_state_status;
+
 struct klua_communication {
 	struct hlist_head states_table [KLUA_HASH_BUCKETS];
 	struct hlist_head clients_table [KLUA_HASH_BUCKETS];
@@ -38,6 +43,9 @@ struct klua_communication {
 struct klua_state {
 	struct hlist_node node;
 	lua_State *L;
+	luaL_Buffer buffer;
+	klua_state_status status;
+	size_t curr_script_size;
 	spinlock_t lock;
 	refcount_t users;
 	#ifndef LUNATIK_UNUSED
