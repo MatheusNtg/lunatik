@@ -32,8 +32,6 @@
 #include "states.h"
 #include "netlink_common.h"
 
-static char *buffer;
-
 extern struct klua_communication *klua_pernet(struct net *net);
 
 static int klua_create_state(struct sk_buff *buff, struct genl_info *info);
@@ -102,9 +100,9 @@ static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 {
 	struct klua_state *s;
 	struct klua_communication *klc;
+	const char *finalscript;
 	char *fragment;
 	char *state_name;
-	u8 count;
 	u8 flags;
 
 	pr_debug("Received a EXECUTE_CODE message\n");
@@ -120,32 +118,27 @@ static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 	}
 
 	if ((flags & KLUA_INIT) && (s->status == FREE)) {
-		pr_info("Estou inicializando as variáveis necessárias\n");
 		s->curr_script_size = *((u32*)nla_data(info->attrs[SCRIPT_SIZE]));
 		s->status = RECEIVING;
-	
-		if ((buffer = kmalloc(s->curr_script_size, GFP_KERNEL)) == NULL) {
-			pr_err("Falha ao alocar\n");
-			return 0;
-		}
+		luaL_buffinit(s->L, &s->buffer);
 	} // TODO Otherwise, reply with a "busy state"
 
 	if ((flags & KLUA_MULTIPART_MSG) && (s->status == RECEIVING)) {
-		count = *((u8 *)nla_data(info->attrs[FRAG_COUNT]));
-		memcpy(buffer + (count * KLUA_MAX_SCRIPT_SIZE), fragment, strlen(fragment));
+		luaL_addstring(&s->buffer, fragment);
 	}
 
 
 	if ((flags & KLUA_LAST_MSG) && (s->status == RECEIVING)){
 		pr_info("Recebi a última mensagem\n");
-		count = *((u8 *)nla_data(info->attrs[FRAG_COUNT]));
 
-		memcpy(buffer + (count * KLUA_MAX_SCRIPT_SIZE), fragment, strlen(fragment));
+		luaL_addstring(&s->buffer, fragment);
+		luaL_pushresult(&s->buffer);
 
+		finalscript = lua_tostring(s->L, -1);
 
-		luaL_dostring(s->L, buffer);
+		luaL_dostring(s->L, finalscript);
+		
 		s->status = FREE;	
-		kfree(buffer);
 	}
 	
 

@@ -6,7 +6,7 @@ extern struct genl_family lunatik_family;
 #include <net/genetlink.h>
 #endif
 
-#define KLUA_MAX_SCRIPT_SIZE (20)
+#define KLUA_MAX_SCRIPT_SIZE (3000) // TODO Find, a size more precise
 
 /*Lunatik generic netlink protocol flags*/
 #define KLUA_INIT		   0x01	/* Initializes the needed variables for script execution */
