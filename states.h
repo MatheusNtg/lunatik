@@ -43,8 +43,7 @@ struct klua_communication {
 struct klua_state {
 	struct hlist_node node;
 	lua_State *L;
-	char *buffer;
-	int offset;
+	luaL_Buffer *buffer;
 	klua_state_status status;
 	size_t curr_script_size;
 	spinlock_t lock;
