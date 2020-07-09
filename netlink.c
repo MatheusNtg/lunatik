@@ -124,7 +124,7 @@ static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 	} // TODO Otherwise, reply with a "busy state"
 
 	if ((flags & KLUA_MULTIPART_MSG) && (s->status == RECEIVING)) {
-		luaL_addstring(&s->buffer, fragment);
+		luaL_addlstring(&s->buffer, fragment, KLUA_MAX_SCRIPT_SIZE);
 	}
 
 
@@ -135,10 +135,18 @@ static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 		luaL_pushresult(&s->buffer);
 
 		finalscript = lua_tostring(s->L, -1);
+		
+		if (!klua_state_get(s)) {
+			pr_err("Failed to get state\n");
+			return 0;
+		}
 
 		luaL_dostring(s->L, finalscript);
-		
+		//luaL_loadbufferx(s->L, finalscript, s->curr_script_size, "teste", "t");
+		//lua_pcall(s->L, 0, 0, 0);
 		s->status = FREE;	
+	
+		klua_state_put(s);
 	}
 	
 
