@@ -43,7 +43,6 @@ struct nla_policy lunatik_policy[ATTRS_COUNT] = {
 	[CODE]		 = { .type = NLA_STRING },
 	[FLAGS] 	 = { .type = NLA_U8 },
 	[SCRIPT_SIZE]= { .type = NLA_U32 }, //TODO Ver se eu preciso realmente desse tamanho, e decidir qual vai ser o tamanho máximo (de arquivo) suportado pela API
-	[FRAG_COUNT] = { .type = NLA_U8}
 };
 
 static const struct genl_ops l_ops[] = {
@@ -96,11 +95,11 @@ static int klua_create_state(struct sk_buff *buff, struct genl_info *info)
 
 	return 0;
 }
+
 static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 {
 	struct klua_state *s;
 	struct klua_communication *klc;
-	const char *finalscript;
 	char *fragment;
 	char *state_name;
 	u8 flags;
@@ -120,32 +119,37 @@ static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 	if ((flags & KLUA_INIT) && (s->status == FREE)) {
 		s->curr_script_size = *((u32*)nla_data(info->attrs[SCRIPT_SIZE]));
 		s->status = RECEIVING;
-		luaL_buffinit(s->L, &s->buffer);
+		s->offset = 0;
+
+		if ((s->buffer = vmalloc(s->curr_script_size)) == NULL) {
+			pr_err("Failed allocating memory to code buffer");
+			return 0;
+		}
+
 	} // TODO Otherwise, reply with a "busy state"
 
 	if ((flags & KLUA_MULTIPART_MSG) && (s->status == RECEIVING)) {
-		luaL_addlstring(&s->buffer, fragment, KLUA_MAX_SCRIPT_SIZE);
+		strncpy(s->buffer + (s->offset * KLUA_MAX_SCRIPT_SIZE), fragment, KLUA_MAX_SCRIPT_SIZE);
+		s->offset++;
 	}
 
 
 	if ((flags & KLUA_LAST_MSG) && (s->status == RECEIVING)){
 		pr_info("Recebi a última mensagem\n");
-
-		luaL_addstring(&s->buffer, fragment);
-		luaL_pushresult(&s->buffer);
-
-		finalscript = lua_tostring(s->L, -1);
+	
+		strcpy(s->buffer + (s->offset * KLUA_MAX_SCRIPT_SIZE), fragment);
 		
 		if (!klua_state_get(s)) {
 			pr_err("Failed to get state\n");
 			return 0;
 		}
 
-		luaL_dostring(s->L, finalscript);
+		luaL_dostring(s->L, s->buffer);
 		//luaL_loadbufferx(s->L, finalscript, s->curr_script_size, "teste", "t");
 		//lua_pcall(s->L, 0, 0, 0);
 		s->status = FREE;	
-	
+		s->offset = 0;
+		vfree(s->buffer);
 		klua_state_put(s);
 	}
 	

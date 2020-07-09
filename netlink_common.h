@@ -18,7 +18,8 @@ extern struct genl_family lunatik_family;
 
 enum lunatik_operations {
 	CREATE_STATE,
-	EXECUTE_CODE
+	EXECUTE_CODE,
+	DESTROY_STATE,
 };
 
 enum lunatik_attrs {
@@ -27,7 +28,6 @@ enum lunatik_attrs {
 	CODE,
 	FLAGS,
 	SCRIPT_SIZE,
-	FRAG_COUNT,
 	ATTRS_COUNT
 #define ATTRS_MAX (ATTRS_COUNT - 1)
 };
