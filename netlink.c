@@ -43,7 +43,7 @@ struct nla_policy lunatik_policy[ATTRS_COUNT] = {
 	[MAX_ALLOC]  = { .type = NLA_U32 },
 	[CODE]		 = { .type = NLA_STRING },
 	[FLAGS] 	 = { .type = NLA_U8 },
-	[SCRIPT_SIZE]= { .type = NLA_U32 }, //TODO Ver se eu preciso realmente desse tamanho, e decidir qual vai ser o tamanho máximo (de arquivo) suportado pela API
+	[SCRIPT_SIZE]= { .type = NLA_U32 }, 
 };
 
 static const struct genl_ops l_ops[] = {
@@ -156,13 +156,14 @@ static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
 			return 0;
 		}
 
-		luaL_dostring(s->L, finalscript);
-		//luaL_loadbufferx(s->L, finalscript, s->curr_script_size, "teste", "t");
-		//lua_pcall(s->L, 0, 0, 0);
+		if (luaU_dostring(s->L, finalscript, s->curr_script_size, "Lua in kernel")) {
+			pr_err("%s\n", lua_tostring(s->L, -1));
+		}
+
 		s->status = FREE;	
+		s->curr_script_size = 0;
 		kfree(s->buffer);
 		klua_state_put(s);
-		
 	}
 	
 
