@@ -20,11 +20,13 @@ enum lunatik_operations {
 	CREATE_STATE,
 	EXECUTE_CODE,
 	DESTROY_STATE,
+	LIST_STATES,
 };
 
 enum lunatik_attrs {
 	STATE_NAME = 1,
 	MAX_ALLOC,
+	CURR_ALLOC,
 	CODE,
 	FLAGS,
 	SCRIPT_SIZE,

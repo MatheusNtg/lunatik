@@ -10,12 +10,12 @@
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- */
+	 * GNU General Public License for more details.
+	 *
+	 * You should have received a copy of the GNU General Public License along
+	 * with this program; if not, write to the Free Software Foundation, Inc.,
+	 * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+	 */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/types.h>
@@ -32,162 +32,214 @@
 #include "states.h"
 #include "netlink_common.h"
 
-extern struct klua_communication *klua_pernet(struct net *net);
+	extern struct klua_communication *klua_pernet(struct net *net);
 
-static int klua_create_state(struct sk_buff *buff, struct genl_info *info);
-static int klua_execute_code(struct sk_buff *buff, struct genl_info *info);
-static int klua_destroy_state(struct sk_buff *buff, struct genl_info *info);
+	static int klua_create_state(struct sk_buff *buff, struct genl_info *info);
+	static int klua_execute_code(struct sk_buff *buff, struct genl_info *info);
+	static int klua_destroy_state(struct sk_buff *buff, struct genl_info *info);
+	static int klua_list_states(struct sk_buff *buff, struct genl_info *info);
 
-struct nla_policy lunatik_policy[ATTRS_COUNT] = {
-	[STATE_NAME] = { .type = NLA_STRING },
-	[MAX_ALLOC]  = { .type = NLA_U32 },
-	[CODE]		 = { .type = NLA_STRING },
-	[FLAGS] 	 = { .type = NLA_U8 },
-	[SCRIPT_SIZE]= { .type = NLA_U32 }, 
-};
 
-static const struct genl_ops l_ops[] = {
-	{
-		.cmd    = CREATE_STATE,
-		.doit   = klua_create_state,
+	struct nla_policy lunatik_policy[ATTRS_COUNT] = {
+		[STATE_NAME] = { .type = NLA_STRING },
+		[MAX_ALLOC]  = { .type = NLA_U32 },
+		[CODE]		 = { .type = NLA_STRING },
+		[FLAGS] 	 = { .type = NLA_U8 },
+		[SCRIPT_SIZE]= { .type = NLA_U32 }, 
+		[CURR_ALLOC] = { .type = NLA_U32 },
+	};
+
+	static const struct genl_ops l_ops[] = {
+		{
+			.cmd    = CREATE_STATE,
+			.doit   = klua_create_state,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
-		/*Before kernel 5.2.0, each operation has its own policy*/
-		.policy = lunatik_policy
+			/*Before kernel 5.2.0, each operation has its own policy*/
+			.policy = lunatik_policy
 #endif
-	},
-	{
-		.cmd    = EXECUTE_CODE,
-		.doit   = klua_execute_code,
+		},
+		{
+			.cmd    = EXECUTE_CODE,
+			.doit   = klua_execute_code,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
-		/*Before kernel 5.2.0, each operation has its own policy*/
-		.policy = lunatik_policy
+			/*Before kernel 5.2.0, each operation has its own policy*/
+			.policy = lunatik_policy
 #endif
-	},
-	{
-		.cmd    = DESTROY_STATE,
-		.doit   = klua_destroy_state,
+		},
+		{
+			.cmd    = DESTROY_STATE,
+			.doit   = klua_destroy_state,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
-		/*Before kernel 5.2.0, each operation has its own policy*/
-		.policy = lunatik_policy
+			/*Before kernel 5.2.0, each operation has its own policy*/
+			.policy = lunatik_policy
 #endif
-	},
-};
+		},
+		{
+			.cmd    = LIST_STATES,
+			.doit   = klua_list_states,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+			/*Before kernel 5.2.0, each operation has its own policy*/
+			.policy = lunatik_policy
+#endif
+		}
+	};
 
-struct genl_family lunatik_family = {
-	.name 	 = LUNATIK_FAMILY,
-	.version = NKLUA_VERSION,
-	.maxattr = ATTRS_MAX,
-	.netnsok = true, /*Make this family visible for all namespaces*/
+	struct genl_family lunatik_family = {
+		.name 	 = LUNATIK_FAMILY,
+		.version = NKLUA_VERSION,
+		.maxattr = ATTRS_MAX,
+		.netnsok = true, /*Make this family visible for all namespaces*/
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0)
-	.policy  = lunatik_policy,
+		.policy  = lunatik_policy,
 #endif
-	.module  = THIS_MODULE,
-	.ops     = l_ops,
-	.n_ops   = ARRAY_SIZE(l_ops),
-};
+		.module  = THIS_MODULE,
+		.ops     = l_ops,
+		.n_ops   = ARRAY_SIZE(l_ops),
+	};
 
-static int klua_create_state(struct sk_buff *buff, struct genl_info *info)
-{
-	struct klua_communication *klc;
-	char *state_name;
-	u32 *max_alloc;
-	u32 pid;
+	static int klua_create_state(struct sk_buff *buff, struct genl_info *info)
+	{
+		struct klua_communication *klc;
+		char *state_name;
+		u32 *max_alloc;
+		u32 pid;
 
-	pr_debug("Received a CREATE_STATE message\n");
-	
-	klc = klua_pernet(genl_info_net(info));
-	state_name = (char *)nla_data(info->attrs[STATE_NAME]);
-	max_alloc = (u32 *)nla_data(info->attrs[MAX_ALLOC]);
-	pid = info->snd_portid;
+		pr_debug("Received a CREATE_STATE message\n");
+		
+		klc = klua_pernet(genl_info_net(info));
+		state_name = (char *)nla_data(info->attrs[STATE_NAME]);
+		max_alloc = (u32 *)nla_data(info->attrs[MAX_ALLOC]);
+		pid = info->snd_portid;
 
-	net_state_create(klc, *max_alloc, state_name);
+		net_state_create(klc, *max_alloc, state_name);
 
-	return 0;
-}
-
-static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
-{
-	struct klua_state *s;
-	struct klua_communication *klc;
-	const char *finalscript;
-	char *fragment;
-	char *state_name;
-	u8 flags;
-
-	pr_debug("Received a EXECUTE_CODE message\n");
-
-	klc = klua_pernet(genl_info_net(info));
-	state_name = (char *)nla_data(info->attrs[STATE_NAME]);
-	fragment = (char *)nla_data(info->attrs[CODE]);
-	flags = *((u8*)nla_data(info->attrs[FLAGS]));
-
-	if ((s = net_state_lookup(klc, state_name)) == NULL) {
-		pr_err("Error finding klua state\n");
 		return 0;
 	}
 
-	if ((flags & KLUA_INIT) && (s->status == FREE)) {
-		s->curr_script_size = *((u32*)nla_data(info->attrs[SCRIPT_SIZE]));
-		s->status = RECEIVING;
-		
-		if ((s->buffer = kmalloc(sizeof(luaL_Buffer), GFP_KERNEL)) == NULL) {
-			pr_err("Failed allocating memory to code buffer\n");
+	static int klua_execute_code(struct sk_buff *buff, struct genl_info *info)
+	{
+		struct klua_state *s;
+		struct klua_communication *klc;
+		const char *finalscript;
+		char *fragment;
+		char *state_name;
+		u8 flags;
+
+		pr_debug("Received a EXECUTE_CODE message\n");
+
+		klc = klua_pernet(genl_info_net(info));
+		state_name = (char *)nla_data(info->attrs[STATE_NAME]);
+		fragment = (char *)nla_data(info->attrs[CODE]);
+		flags = *((u8*)nla_data(info->attrs[FLAGS]));
+
+		if ((s = net_state_lookup(klc, state_name)) == NULL) {
+			pr_err("Error finding klua state\n");
 			return 0;
 		}
 
-		luaL_buffinit(s->L, s->buffer);	
-	} // TODO Otherwise, reply with a "busy state"
+		if ((flags & KLUA_INIT) && (s->status == FREE)) {
+			s->curr_script_size = *((u32*)nla_data(info->attrs[SCRIPT_SIZE]));
+			s->status = RECEIVING;
+			
+			if ((s->buffer = kmalloc(sizeof(luaL_Buffer), GFP_KERNEL)) == NULL) {
+				pr_err("Failed allocating memory to code buffer\n");
+				return 0;
+			}
 
-	if ((flags & KLUA_MULTIPART_MSG) && (s->status == RECEIVING)) {
-		luaL_addlstring(s->buffer, fragment, KLUA_MAX_SCRIPT_SIZE);
-	}
+			luaL_buffinit(s->L, s->buffer);	
+		} // TODO Otherwise, reply with a "busy state"
+
+		if ((flags & KLUA_MULTIPART_MSG) && (s->status == RECEIVING)) {
+			luaL_addlstring(s->buffer, fragment, KLUA_MAX_SCRIPT_SIZE);
+		}
 
 
-	if ((flags & KLUA_LAST_MSG) && (s->status == RECEIVING)){
-		pr_info("Recebi a última mensagem\n");
-	
-		luaL_addstring(s->buffer, fragment);
-		luaL_pushresult(s->buffer);
-
-		finalscript = lua_tostring(s->L, -1); // TODO How to free this memory?
+		if ((flags & KLUA_LAST_MSG) && (s->status == RECEIVING)){
+			pr_info("Recebi a última mensagem\n");
 		
-		if (!klua_state_get(s)) {
-			pr_err("Failed to get state\n");
-			return 0;
+			luaL_addstring(s->buffer, fragment);
+			luaL_pushresult(s->buffer);
+
+			finalscript = lua_tostring(s->L, -1); // TODO How to free this memory?
+			
+			if (!klua_state_get(s)) {
+				pr_err("Failed to get state\n");
+				return 0;
+			}
+
+			if (luaU_dostring(s->L, finalscript, s->curr_script_size, "Lua in kernel")) {
+				pr_err("%s\n", lua_tostring(s->L, -1));
+			}
+
+			s->status = FREE;	
+			s->curr_script_size = 0;
+			kfree(s->buffer);
+			klua_state_put(s);
 		}
+		
 
-		if (luaU_dostring(s->L, finalscript, s->curr_script_size, "Lua in kernel")) {
-			pr_err("%s\n", lua_tostring(s->L, -1));
-		}
-
-		s->status = FREE;	
-		s->curr_script_size = 0;
-		kfree(s->buffer);
-		klua_state_put(s);
-	}
-	
-
-	return 0;
-}
-
-static int klua_destroy_state(struct sk_buff *buff, struct genl_info *info)
-{
-	struct klua_communication *klc;
-	char *state_name;
-	
-	klc = klua_pernet(genl_info_net(info));
-	state_name = (char *)nla_data(info->attrs[STATE_NAME]);
-	
-	pr_debug("Received a DESTROY_STATE command\n");
-
-	if (net_state_destroy(klc, state_name)) {
-		pr_err("Failed to destroy state %s\n", state_name);
 		return 0;
-	}	
+	}
+
+	static int klua_destroy_state(struct sk_buff *buff, struct genl_info *info)
+	{
+		struct klua_communication *klc;
+		char *state_name;
+		
+		klc = klua_pernet(genl_info_net(info));
+		state_name = (char *)nla_data(info->attrs[STATE_NAME]);
+		
+		pr_debug("Received a DESTROY_STATE command\n");
+
+		if (net_state_destroy(klc, state_name)) {
+			pr_err("Failed to destroy state %s\n", state_name);
+			return 0;
+		}	
+
+		return 0;
+	}
+
+	static int klua_list_states(struct sk_buff *buff, struct genl_info *info)
+	{
+		struct sk_buff *obuff;
+		struct klua_communication *klc;
+		struct klua_state *state;
+		void *msg_head;
+		int bucket;
+
+		pr_debug("Received a LIST_STATES command\n");
+
+		klc = klua_pernet(genl_info_net(info));
+
+	//	hash_for_each_rcu(klc->states_table, bucket, state, node) {
+			//if ((obuff = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL)) == NULL) {
+			//	pr_err("Failed allocating message to an reply\n");
+		//		return 0;
+		//	}
+
+			if ((msg_head = genlmsg_put_reply(buff, info, &lunatik_family, 0, LIST_STATES)) == NULL) {
+			pr_err("Failed to put generic netlink header\n");
+			return 0;
+		}
+
+//		if (nla_put_string(obuff, STATE_NAME, state->name)   ||
+//			nla_put_u32(obuff, CURR_ALLOC, state->curralloc) ||
+//			nla_put_u32(obuff, MAX_ALLOC, state->maxalloc)
+//		   ) {
+//			pr_err("Failed to put attributes on socket buffer\n");
+//			return 0;
+//		}
+
+		genlmsg_end(buff, msg_head);
+
+		if (genlmsg_reply(buff, info) < 0) {
+			pr_err("Failed to send message to user space\n");
+			return 0;
+		}
+//	}
 
 	return 0;
 }
-
 
 
 
