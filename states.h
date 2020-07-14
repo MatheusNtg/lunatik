@@ -21,10 +21,7 @@
 #define LUNATIK_STATES_H
 
 #include "lua/lua.h"
-
-#define LUNATIK_NAME_MAXSIZE 64
-#define LUNATIK_MIN_ALLOC_BYTES (32 * 1024UL)
-#define LUNATIK_HASH_BUCKETS 32
+#include "lunatik_conf.h"
 
 struct lunatik_session {
 	struct hlist_head states_table[LUNATIK_HASH_BUCKETS];
