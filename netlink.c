@@ -110,7 +110,7 @@ static int lunatikN_newstate(struct sk_buff *buff, struct genl_info *info)
 	max_alloc = (u32 *)nla_data(info->attrs[MAX_ALLOC]);
 	pid = info->snd_portid;
 
-	lunatik_newstate(session, *max_alloc, state_name);
+	lunatik_netnewstate(session, *max_alloc, state_name);
 
 	return 0;
 }
@@ -137,14 +137,16 @@ static int lunatikN_exec(struct sk_buff *buff, struct genl_info *info)
 	}
 
 	if (flags & LUNATIK_INIT) {
-		s->curr_script_size = *((u32*)nla_data(info->attrs[SCRIPT_SIZE]));
+		s->scriptsize = *((u32*)nla_data(info->attrs[SCRIPT_SIZE]));
 		
+		/*TODO Discover why this lock when disable bh is causing a kernel panic related to skb release
+		*/
+		spin_lock(&s->lock);
 		if ((s->buffer = kmalloc(sizeof(luaL_Buffer), GFP_KERNEL)) == NULL) {
 			pr_err("Failed allocating memory to code buffer\n");
 			return 0;
 		}
-		spin_lock_bh(&s->lock);
-		luaL_buffinit(s->L, s->buffer);	
+		luaL_buffinit(s->L, s->buffer);		
 	} // TODO Otherwise, reply with a "busy state"
 
 	if (flags & LUNATIK_MULTI) {
@@ -157,17 +159,17 @@ static int lunatikN_exec(struct sk_buff *buff, struct genl_info *info)
 
 		finalscript = lua_tostring(s->L, -1);
 		
-		if (!lunatik_state_get(s)) {
+		if (!lunatik_stateget(s)) {
 			pr_err("Failed to get state\n");
 			return 0;
 		}
 
-		if (luaU_dostring(s->L, finalscript, s->curr_script_size, "Lua in kernel")) {
+		if (luaU_dostring(s->L, finalscript, s->scriptsize, "Lua in kernel")) {
 			pr_err("%s\n", lua_tostring(s->L, -1));
 		}
 		
-		spin_unlock_bh(&s->lock);
-		lunatik_state_put(s);
+		spin_unlock(&s->lock);
+		lunatik_stateput(s);
 	}
 
 	return 0;
@@ -183,7 +185,7 @@ static int lunatikN_close(struct sk_buff *buff, struct genl_info *info)
 	
 	pr_debug("Received a DESTROY_STATE command\n");
 
-	if (lunatik_close(session, state_name)) {
+	if (lunatik_netclose(session, state_name)) {
 		pr_err("Failed to destroy state %s\n", state_name);
 		return 0;
 	}	
@@ -245,7 +247,7 @@ static int lunatikN_list(struct sk_buff *buff, struct genl_info *info)
 			return err;
 		}
 
-		pr_debuf("Message sento to kernel\n");
+		pr_debug("Message sento to kernel\n");
 	}
 
 	return 0;

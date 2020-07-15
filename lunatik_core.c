@@ -32,6 +32,7 @@
 #include "lua/lualib.h"
 
 #include "states.h"
+#include "netlink_common.h"
 
 EXPORT_SYMBOL(lua_checkstack);
 EXPORT_SYMBOL(lua_xmove);
@@ -181,6 +182,7 @@ EXPORT_SYMBOL(lunatik_netnewstate);
 EXPORT_SYMBOL(lunatik_netclose);
 EXPORT_SYMBOL(lunatik_netstatelookup);
 
+extern struct genl_family lunatik_family;
 extern void lunatik_statesinit(void);
 extern void lunatik_closeall(void);
 extern void state_destroy(lunatik_State *s);
@@ -231,13 +233,18 @@ static struct pernet_operations lunatik_net_ops = {
 
 static int __init modinit(void)
 {
-	int ret;
+	int err;
 
 	lunatik_statesinit();
 
-	if ((ret = register_pernet_subsys(&lunatik_net_ops))) {
+	if ((err = register_pernet_subsys(&lunatik_net_ops))) {
 		pr_err("Failed to register pernet operations\n");
-		return ret;
+		return err;
+	}
+
+	if ((err = genl_register_family(&lunatik_family))) {
+		pr_err("Failed to register generic netlink family\n");
+		return err;
 	}
 
 	return 0;
@@ -247,6 +254,7 @@ static void __exit modexit(void)
 {
 	lunatik_closeall();
 	unregister_pernet_subsys(&lunatik_net_ops);
+	genl_unregister_family(&lunatik_family);
 }
 
 module_init(modinit);

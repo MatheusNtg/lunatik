@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2020 Matheus Rodrigues <matheussr61@gmail.com>
  * Copyright (C) 2017-2019  CUJO LLC
  *
  * This program is free software; you can redistribute it and/or modify
@@ -16,37 +17,28 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#ifndef NFLUA_H
-#define NFLUA_H
+#ifndef LUNATIK_H
+#define LUNATIK_H
 
 #include <sys/user.h>
 #include <stdint.h>
-#include <netlink_common.h>
+#include <netlink/genl/genl.h>
+#include "../netlink_common.h"
+#include "../lunatik_conf.h"
 
-enum nflua_control_state {
-    NFLUA_LINK_READY,
-    NFLUA_SENDING_REQUEST,
-    NFLUA_PENDING_REPLY,
-    NFLUA_RECEIVING_REPLY,
-    NFLUA_PROTOCOL_OUTOFSYNC,
-    NFLUA_SOCKET_CLOSED,
+struct lunatik_nl_state {
+    uint32_t maxalloc;
+    uint32_t curralloc;
+    char name[LUNATIK_NAME_MAXSIZE];
 };
 
-struct nflua_response {
-    uint32_t type;
-    uint32_t count;
-    uint32_t total_size;
-};
-
-struct nflua_control {
-    int fd;
+struct lunatik_control {
+    struct nl_sock *sock;
+    int family;
     uint32_t pid;
-    uint32_t seqnum;
-    int currfrag;
-    enum nflua_control_state state;
-    uint8_t buffer[NFLUA_PAYLOAD_MAXSIZE];
 };
 
+#ifndef _UNUSED
 struct nflua_data {
     int fd;
     uint32_t pid;
@@ -69,23 +61,27 @@ static inline int nflua_control_getpid(const struct nflua_control *ctrl)
 {
     return ctrl->pid;
 }
+#endif /* _UNUSED */
 
-static inline int nflua_control_is_open(const struct nflua_control *ctrl)
+static inline int lunatikC_isopen(const struct lunatik_control *ctrl)
 {
-    return ctrl->fd >= 0;
+    return nl_socket_get_fd(ctrl->sock) != -1;
 }
 
-int nflua_control_init(struct nflua_control *ctrl, uint32_t pid);
+int lunatikC_init(struct lunatik_control *ctrl, uint32_t pid);
 
+#ifndef _UNUSED
 void nflua_control_close(struct nflua_control *ctrl);
+#endif /*_UNUSED*/
 
-int nflua_control_create(struct nflua_control *ctrl, struct nflua_nl_state *);
+int lunatikC_create(struct lunatik_control *ctrl, struct lunatik_nl_state *s);
 
-int nflua_control_destroy(struct nflua_control *ctrl, const char *name);
+int lunatikC_destroy(struct lunatik_control *ctrl, const char *name);
 
-int nflua_control_execute(struct nflua_control *ctrl, const char *name,
-        const char *scriptname, const char *payload, size_t total);
+int lunatikC_execute(struct lunatik_control *ctrl, const char *state_name,
+    const char *script, size_t total_code_size);
 
+#ifndef _UNUSED
 int nflua_control_list(struct nflua_control *ctrl);
 
 int nflua_control_receive(struct nflua_control *ctrl,
@@ -114,5 +110,5 @@ int nflua_data_send(struct nflua_data *dch, const char *name,
         const char *payload, size_t len);
 
 int nflua_data_receive(struct nflua_data *dch, char *state, char *buffer);
-
-#endif /* NFLUA_H */
+#endif /* _UNUSED */
+#endif /* LUNATIK_H */

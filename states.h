@@ -33,10 +33,12 @@ struct lunatik_session {
 typedef struct lunatik_state {
 	struct hlist_node node;
 	lua_State *L;
+	luaL_Buffer *buffer;
 	spinlock_t lock;
 	refcount_t users;
 	size_t maxalloc;
 	size_t curralloc;
+	size_t scriptsize;
 	unsigned char name[LUNATIK_NAME_MAXSIZE];
 } lunatik_State;
 
