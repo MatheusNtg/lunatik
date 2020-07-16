@@ -33,7 +33,7 @@
 
 #define MIN(x,y) ((x) < (y) ? (x) : (y))
 
-static struct nl_msg *prepare_message(struct lunatik_control *ctrl, int command)
+static struct nl_msg *prepare_message(struct lunatik_session *session, int command)
 {
 	struct nl_msg *msg;
 
@@ -42,7 +42,7 @@ static struct nl_msg *prepare_message(struct lunatik_control *ctrl, int command)
 		return NULL;
 	}
 
-	if ((genlmsg_put(msg, NL_AUTO_PORT, NL_AUTO_SEQ, ctrl->family,
+	if ((genlmsg_put(msg, NL_AUTO_PORT, NL_AUTO_SEQ, session->family,
 					0, 0, command, LUNATIK_NLVERSION)) == NULL) {
 		printf("Failed to put generic netlink message header\n");
 		return NULL;
@@ -145,18 +145,18 @@ int nflua_control_receive(struct nflua_control *ctrl,
 }
 #endif /* _UNUSED */
 
-int lunatikC_create(struct lunatik_control *ctrl, struct lunatik_nl_state *cmd)
+int lunatikS_create(struct lunatik_session *session, struct lunatik_nl_state *cmd)
 {
 	struct nl_msg *msg;
 	int ret = -1;
 
-	if ((msg = prepare_message(ctrl, CREATE_STATE)) == NULL)
+	if ((msg = prepare_message(session, CREATE_STATE)) == NULL)
 		return ret;
 
 	NLA_PUT_STRING(msg, STATE_NAME, cmd->name);
 	NLA_PUT_U32(msg, MAX_ALLOC, cmd->maxalloc);
 
-	if ((ret = nl_send_auto(ctrl->sock, msg)) < 0) {
+	if ((ret = nl_send_sync(session->sock, msg)) < 0) {
 		printf("Failed to send message to kernel\n %s\n", nl_geterror(ret));
 		return ret;
 	}
@@ -168,17 +168,17 @@ nla_put_failure:
 	return ret;
 }
 
-int lunatikC_destroy(struct lunatik_control *ctrl, const char *name)
+int lunatikS_destroy(struct lunatik_session *session, const char *name)
 {
 	struct nl_msg *msg;
 	int ret = -1;
 
-	if ((msg = prepare_message(ctrl, DESTROY_STATE)) == NULL)
+	if ((msg = prepare_message(session, DESTROY_STATE)) == NULL)
 		return ret;
 
 	NLA_PUT_STRING(msg, STATE_NAME, name);
 
-	if ((ret = nl_send_auto(ctrl->sock, msg)) < 0) {
+	if ((ret = nl_send_sync(session->sock, msg)) < 0) {
 		printf("Failed to send destroy message:\n %s\n", nl_geterror(ret));
 		return ret;
 	}
@@ -190,30 +190,27 @@ nla_put_failure:
 	return ret;
 }
 
-int lunatikC_execute(struct lunatik_control *ctrl, const char *state_name,
+int lunatikS_execute(struct lunatik_session *session, const char *state_name,
     const char *script, size_t total_code_size)
 {
 	struct nl_msg *msg;
 	char *fragment;
-	int ret = -1;
+	int err = -1;
 	int parts = 0;
 
 	if (total_code_size <= LUNATIK_FRAGMENT_SIZE) {
-		if ((msg = prepare_message(ctrl, EXECUTE_CODE)) == NULL)
-			return ret;
+		if ((msg = prepare_message(session, EXECUTE_CODE)) == NULL)
+			return err;
 
 		NLA_PUT_STRING(msg, STATE_NAME, state_name);
 		NLA_PUT_STRING(msg, CODE, script);
 		NLA_PUT_U8(msg, FLAGS, LUNATIK_INIT | LUNATIK_DONE);
 		NLA_PUT_U32(msg, SCRIPT_SIZE, total_code_size);
 
-		if ((ret = nl_send_auto(ctrl->sock, msg)) < 0) {
-			printf("Failed to send message\n %s\n", nl_geterror(ret));
-			nlmsg_free(msg);
-			return ret;
+		if ((err = nl_send_sync(session->sock, msg)) < 0) {
+			printf("Failed to send message\n %s\n", nl_geterror(err));
+			return err;
 		}
-
-		nlmsg_free(msg);
 	} else {
 		parts = (total_code_size % LUNATIK_FRAGMENT_SIZE == 0) ?
 			total_code_size / LUNATIK_FRAGMENT_SIZE :
@@ -222,9 +219,9 @@ int lunatikC_execute(struct lunatik_control *ctrl, const char *state_name,
 		fragment = malloc(sizeof(char) * LUNATIK_FRAGMENT_SIZE);
 
 		for (int i = 0; i < parts - 1; i++) {
-			if ((msg = prepare_message(ctrl, EXECUTE_CODE)) == NULL){
+			if ((msg = prepare_message(session, EXECUTE_CODE)) == NULL){
 				nlmsg_free(msg);
-				return ret;
+				return err;
 			}
 
 			strncpy(fragment, script + (i * LUNATIK_FRAGMENT_SIZE), LUNATIK_FRAGMENT_SIZE);
@@ -239,17 +236,15 @@ int lunatikC_execute(struct lunatik_control *ctrl, const char *state_name,
 				NLA_PUT_U8(msg, FLAGS, LUNATIK_MULTI);
 			}
 
-			if ((ret = nl_send_auto(ctrl->sock, msg)) < 0) {
-				printf("Failed to send fragment\n %s\n", nl_geterror(ret));
+			if ((err = nl_send_sync(session->sock, msg)) < 0) {
+				printf("Failed to send fragment\n %s\n", nl_geterror(err));
 				nlmsg_free(msg);
-				return ret;
+				return err;
 			}
-
-			nlmsg_free(msg);
 		}
 
-		if ((msg = prepare_message(ctrl, EXECUTE_CODE)) == NULL)
-			return ret;
+		if ((msg = prepare_message(session, EXECUTE_CODE)) == NULL)
+			return err;
 
 		strncpy(fragment, script + ((parts - 1) * LUNATIK_FRAGMENT_SIZE), LUNATIK_FRAGMENT_SIZE);
 
@@ -257,67 +252,70 @@ int lunatikC_execute(struct lunatik_control *ctrl, const char *state_name,
 		NLA_PUT_STRING(msg, CODE, fragment);
 		NLA_PUT_U8(msg, FLAGS, LUNATIK_DONE);
 
-		if ((ret = nl_send_auto(ctrl->sock, msg)) < 0) {
-			printf("Failed to send fragment\n %s\n", nl_geterror(ret));
-			return ret;
+		if ((err = nl_send_sync(session->sock, msg)) < 0) {
+			printf("Failed to send fragment\n %s\n", nl_geterror(err));
+			return err;
 		}
 
 		free(fragment);
-		nlmsg_free(msg);
 	}
 
 	return 0;
 
 nla_put_failure:
 	printf("Failed to put netlink attributes\n");
-	nlmsg_free(msg);
-	return ret;
+	return err;
 }
 
-#ifndef _UNUSED
-int nflua_control_list(struct nflua_control *ctrl)
+int lunatikS_list(struct lunatik_session *session)
 {
-	struct nlmsghdr nlh;
-	struct iovec iov;
-	int ret = -EPERM;
+	struct nl_msg *msg;
+	int err = -1;
 
-	if (ctrl->state != NFLUA_LINK_READY)
-		return ret;
+	if ((msg = prepare_message(session, LIST_STATES)) == NULL) {
+		printf("Error preparing list message\n");
+		return err;
+	}
 
-	nlh.nlmsg_len = NLMSG_LENGTH(0);
-	nlh.nlmsg_type = NFLMSG_LIST;
-	nlh.nlmsg_flags = NFLM_F_REQUEST;
-	nlh.nlmsg_seq = ++(ctrl->seqnum);
-	nlh.nlmsg_pid = ctrl->pid;
+	if ((err = nl_send_sync(session->sock, msg)) < 0) {
+		printf("Failed sending message to kernel\n");
+		return err;
+	}
 
-	iov.iov_base = &nlh;
-	iov.iov_len = NLMSG_HDRLEN;
+	if ((err = nl_recvmsgs_default(session->sock))) {
+		printf("Error receiveing message from kernel\n");
+		return err;
+	}
 
-	if ((ret = sendcmd(ctrl->fd, &iov, 1)) < 0)
-		return ret;
-
-	ctrl->state = NFLUA_PENDING_REPLY;
-	return ret;
+	return err;
 }
-#endif /* _UNUSED */
 
-int lunatikC_init(struct lunatik_control *ctrl, uint32_t pid)
+static int message_handler(struct nl_msg *msg, void *arg)
+{
+	printf("Message handler\n");
+	nl_msg_dump(msg, stdout);
+	return NL_OK;
+}
+
+int lunatikS_init(struct lunatik_session *session, uint32_t pid)
 {
 	int err = -1;
 
-	if (ctrl == NULL)
+	if (session == NULL)
 		return -EINVAL;
 
-	if ((ctrl->sock = nl_socket_alloc()) == NULL)
+	if ((session->sock = nl_socket_alloc()) == NULL)
 		return err;
 
-	if ((err = genl_connect(ctrl->sock)))
+	if ((err = genl_connect(session->sock)))
 		return err;
 
-	if ((ctrl->family = genl_ctrl_resolve(ctrl->sock, LUNATIK_FAMILY)) < 0)
+	if ((session->family = genl_ctrl_resolve(session->sock, LUNATIK_FAMILY)) < 0)
 		return err;
 
-	ctrl->pid = pid;
+	nl_socket_modify_cb(session->sock, NL_CB_VALID, NL_CB_CUSTOM, message_handler, NULL);
+
+	session->pid = pid;
 
 	return 0;
 }

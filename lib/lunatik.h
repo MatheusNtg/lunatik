@@ -26,14 +26,14 @@
 #include "../netlink_common.h"
 #include "../lunatik_conf.h"
 
-struct lunatik_control {
+struct lunatik_session {
     struct nl_sock *sock;
     int family;
     uint32_t pid;
 };
 
 struct lunatik_nl_state {
-    struct lunatik_control *control;
+    struct lunatik_session *session;
     uint32_t maxalloc;
     uint32_t curralloc;
     char name[LUNATIK_NAME_MAXSIZE];
@@ -64,27 +64,27 @@ static inline int nflua_control_getpid(const struct nflua_control *ctrl)
 }
 #endif /* _UNUSED */
 
-static inline int lunatikC_isopen(const struct lunatik_control *ctrl)
+static inline int lunatikS_isopen(const struct lunatik_session *session)
 {
-    return nl_socket_get_fd(ctrl->sock) != -1;
+    return nl_socket_get_fd(session->sock) != -1;
 }
 
-int lunatikC_init(struct lunatik_control *ctrl, uint32_t pid);
+int lunatikS_init(struct lunatik_session *session, uint32_t pid);
 
 #ifndef _UNUSED
 void nflua_control_close(struct nflua_control *ctrl);
 #endif /*_UNUSED*/
 
-int lunatikC_create(struct lunatik_control *ctrl, struct lunatik_nl_state *s);
+int lunatikS_create(struct lunatik_session *session, struct lunatik_nl_state *s);
 
-int lunatikC_destroy(struct lunatik_control *ctrl, const char *name);
+int lunatikS_destroy(struct lunatik_session *session, const char *name);
 
-int lunatikC_execute(struct lunatik_control *ctrl, const char *state_name,
+int lunatikS_execute(struct lunatik_session *session, const char *state_name,
     const char *script, size_t total_code_size);
 
-#ifndef _UNUSED
-int nflua_control_list(struct nflua_control *ctrl);
+int lunatikS_list(struct lunatik_session *session);
 
+#ifndef _UNUSED
 int nflua_control_receive(struct nflua_control *ctrl,
         struct nflua_response *nr, char *buffer);
 
