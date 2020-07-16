@@ -26,16 +26,17 @@
 #include "../netlink_common.h"
 #include "../lunatik_conf.h"
 
-struct lunatik_nl_state {
-    uint32_t maxalloc;
-    uint32_t curralloc;
-    char name[LUNATIK_NAME_MAXSIZE];
-};
-
 struct lunatik_control {
     struct nl_sock *sock;
     int family;
     uint32_t pid;
+};
+
+struct lunatik_nl_state {
+    struct lunatik_control *control;
+    uint32_t maxalloc;
+    uint32_t curralloc;
+    char name[LUNATIK_NAME_MAXSIZE];
 };
 
 #ifndef _UNUSED
