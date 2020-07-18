@@ -26,8 +26,15 @@
 #include "../netlink_common.h"
 #include "../lunatik_conf.h"
 
+struct received_message {
+    uint8_t flags;
+    uint8_t cmd;
+    int states_count;
+};
+
 struct lunatik_session {
     struct nl_sock *sock;
+    struct received_message *rcvmsg;
     int family;
     uint32_t pid;
 };

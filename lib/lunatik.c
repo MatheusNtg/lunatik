@@ -33,7 +33,7 @@
 
 #define MIN(x,y) ((x) < (y) ? (x) : (y))
 
-static struct nl_msg *prepare_message(struct lunatik_session *session, int command)
+static struct nl_msg *prepare_message(struct lunatik_session *session, int command, int flags)
 {
 	struct nl_msg *msg;
 
@@ -48,7 +48,12 @@ static struct nl_msg *prepare_message(struct lunatik_session *session, int comma
 		return NULL;
 	}
 
+	NLA_PUT_U8(msg, FLAGS, flags);
+
 	return msg;
+nla_put_failure:
+	printf("Failed to put attributes preparing the message\n");
+	return NULL;
 }
 
 #ifndef _UNUSED
@@ -150,17 +155,21 @@ int lunatikS_create(struct lunatik_session *session, struct lunatik_nl_state *cm
 	struct nl_msg *msg;
 	int ret = -1;
 
-	if ((msg = prepare_message(session, CREATE_STATE)) == NULL)
+	if ((msg = prepare_message(session, CREATE_STATE, 0)) == NULL)
 		return ret;
 
 	NLA_PUT_STRING(msg, STATE_NAME, cmd->name);
 	NLA_PUT_U32(msg, MAX_ALLOC, cmd->maxalloc);
 
-	if ((ret = nl_send_sync(session->sock, msg)) < 0) {
+	if ((ret = nl_send_auto(session->sock, msg)) < 0) {
 		printf("Failed to send message to kernel\n %s\n", nl_geterror(ret));
 		return ret;
 	}
-
+	printf("Vou receber da função %s\n", __func__);
+	if ((ret = nl_recvmsgs_default(session->sock))) {
+		printf("Failed to receive message from kernel: %s\n", nl_geterror(ret));
+		return ret;
+	}
 	return 0;
 
 nla_put_failure:
@@ -173,15 +182,17 @@ int lunatikS_destroy(struct lunatik_session *session, const char *name)
 	struct nl_msg *msg;
 	int ret = -1;
 
-	if ((msg = prepare_message(session, DESTROY_STATE)) == NULL)
+	if ((msg = prepare_message(session, DESTROY_STATE, 0)) == NULL)
 		return ret;
 
 	NLA_PUT_STRING(msg, STATE_NAME, name);
 
-	if ((ret = nl_send_sync(session->sock, msg)) < 0) {
+	if ((ret = nl_send_auto(session->sock, msg)) < 0) {
 		printf("Failed to send destroy message:\n %s\n", nl_geterror(ret));
 		return ret;
 	}
+	printf("Vou receber da função %s\n", __func__);
+	nl_recvmsgs_default(session->sock);
 
 	return 0;
 
@@ -199,7 +210,7 @@ int lunatikS_execute(struct lunatik_session *session, const char *state_name,
 	int parts = 0;
 
 	if (total_code_size <= LUNATIK_FRAGMENT_SIZE) {
-		if ((msg = prepare_message(session, EXECUTE_CODE)) == NULL)
+		if ((msg = prepare_message(session, EXECUTE_CODE, 0)) == NULL)
 			return err;
 
 		NLA_PUT_STRING(msg, STATE_NAME, state_name);
@@ -219,7 +230,7 @@ int lunatikS_execute(struct lunatik_session *session, const char *state_name,
 		fragment = malloc(sizeof(char) * LUNATIK_FRAGMENT_SIZE);
 
 		for (int i = 0; i < parts - 1; i++) {
-			if ((msg = prepare_message(session, EXECUTE_CODE)) == NULL){
+			if ((msg = prepare_message(session, EXECUTE_CODE, 0)) == NULL){
 				nlmsg_free(msg);
 				return err;
 			}
@@ -243,7 +254,7 @@ int lunatikS_execute(struct lunatik_session *session, const char *state_name,
 			}
 		}
 
-		if ((msg = prepare_message(session, EXECUTE_CODE)) == NULL)
+		if ((msg = prepare_message(session, EXECUTE_CODE, 0)) == NULL)
 			return err;
 
 		strncpy(fragment, script + ((parts - 1) * LUNATIK_FRAGMENT_SIZE), LUNATIK_FRAGMENT_SIZE);
@@ -270,30 +281,76 @@ nla_put_failure:
 int lunatikS_list(struct lunatik_session *session)
 {
 	struct nl_msg *msg;
+	int states_amount;
 	int err = -1;
 
-	if ((msg = prepare_message(session, LIST_STATES)) == NULL) {
+	if ((msg = prepare_message(session, LIST_STATES, LUNATIK_INIT)) == NULL) {
 		printf("Error preparing list message\n");
 		return err;
 	}
 
-	if ((err = nl_send_sync(session->sock, msg)) < 0) {
+	if ((err = nl_send_auto(session->sock, msg)) < 0) {
 		printf("Failed sending message to kernel\n");
 		return err;
 	}
+	
+	nl_recvmsgs_default(session->sock);
+	nl_wait_for_ack(session->sock);
 
-	if ((err = nl_recvmsgs_default(session->sock))) {
-		printf("Error receiveing message from kernel\n");
+	states_amount = session->rcvmsg->states_count;
+
+	for(int i = 0; i < states_amount ; i++){
+		sleep(2);
+		if ((msg = prepare_message(session, LIST_STATES, 0)) == NULL) {
+			printf("Error preparing list message\n");
+			return err;
+		}
+
+		if ((err = nl_send_auto(session->sock, msg)) < 0) {
+			printf("Failed sending message to kernel\n");
+			return err;
+		}
+		
+		nl_recvmsgs_default(session->sock);
+		nl_wait_for_ack(session->sock);
+	}
+
+	if ((msg = prepare_message(session, LIST_STATES, LUNATIK_DONE)) == NULL) {
+		printf("Error preparing list message\n");
 		return err;
 	}
 
-	return err;
+	if ((err = nl_send_auto(session->sock, msg)) < 0) {
+		printf("Failed sending message to kernel\n");
+		return err;
+	}
+	
+	nl_recvmsgs_default(session->sock);
+
+
+	return 0;
 }
 
 static int message_handler(struct nl_msg *msg, void *arg)
 {
-	printf("Message handler\n");
+	struct nlmsghdr *nh = nlmsg_hdr(msg);
+	struct genlmsghdr *gnlh = genlmsg_hdr(nh);
+	struct nlattr * attrs_tb[ATTRS_COUNT + 1];
+	struct received_message *msg_holder = (struct received_message *) arg;
+
 	nl_msg_dump(msg, stdout);
+
+	nla_parse(attrs_tb, ATTRS_COUNT, genlmsg_attrdata(gnlh, 0),
+              genlmsg_attrlen(gnlh, 0), NULL);
+	
+	if (attrs_tb[STATES_COUNT]) {
+		msg_holder->states_count = nla_get_u32(attrs_tb[STATES_COUNT]);
+	}
+
+	if (attrs_tb[STATE_NAME]) {
+		// printf("O nome que eu recebi: %s\n", nla_get_string(attrs_tb[STATE_NAME]));
+	}
+
 	return NL_OK;
 }
 
@@ -313,8 +370,16 @@ int lunatikS_init(struct lunatik_session *session, uint32_t pid)
 	if ((session->family = genl_ctrl_resolve(session->sock, LUNATIK_FAMILY)) < 0)
 		return err;
 
-	nl_socket_modify_cb(session->sock, NL_CB_VALID, NL_CB_CUSTOM, message_handler, NULL);
+	session->rcvmsg = malloc(sizeof(struct received_message));
 
+	if (session->rcvmsg == NULL) {
+		printf("Failed to allocate buffer to incoming messages\n");
+		return err;
+	}
+	session->rcvmsg->states_count = 0;
+	session->rcvmsg->cmd = 0;
+
+	nl_socket_modify_cb(session->sock, NL_CB_MSG_IN, NL_CB_CUSTOM, message_handler, session->rcvmsg);
 	session->pid = pid;
 
 	return 0;
@@ -418,9 +483,6 @@ int nflua_data_init(struct nflua_data *dch, uint32_t pid)
 
 	return 0;
 }
-
-void nflua_data_close(struct nflua_data *dch)
-{
 	if (dch != NULL) {
 		close(dch->fd);
 		dch->fd = -1;

@@ -4,6 +4,12 @@
 #ifdef _KERNEL
 extern struct genl_family lunatik_family;
 #include <net/genetlink.h>
+
+struct send_message {
+	lunatik_State *states_list;
+	int list_size;
+	int curr_pos_to_send;
+};
 #endif
 
 #define LUNATIK_FRAGMENT_SIZE (3000) // TODO Find, a size more precise
