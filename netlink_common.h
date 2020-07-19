@@ -5,7 +5,7 @@
 extern struct genl_family lunatik_family;
 #include <net/genetlink.h>
 
-struct send_message {
+struct reply_buffer {
 	lunatik_State *states_list;
 	int list_size;
 	int curr_pos_to_send;

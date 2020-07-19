@@ -97,7 +97,7 @@ struct genl_family lunatik_family = {
 	.n_ops   = ARRAY_SIZE(l_ops),
 };
 
-static int fill_send_message(struct send_message *message, struct lunatik_instance *instance)
+static int fill_reply_buffer(struct reply_buffer *message, struct lunatik_instance *instance)
 {
 	struct lunatik_state *state;
 	int bucket;
@@ -122,7 +122,7 @@ static int fill_send_message(struct send_message *message, struct lunatik_instan
 	return 0;
 }
 
-static int lunatik_reply(struct lunatik_instance *instance, int command, struct genl_info *info)
+static int send_done_msg(int command, int flags, struct genl_info *info)
 {
 	void *msg_head;
 	struct sk_buff *obuff;
@@ -138,7 +138,7 @@ static int lunatik_reply(struct lunatik_instance *instance, int command, struct 
 		return err;
 	}
 
-	nla_put_u32(obuff, STATES_COUNT, instance->sendmessage->list_size);
+	nla_put_u8(obuff, FLAGS, flags);
 	
 	genlmsg_end(obuff, msg_head);
 
@@ -150,7 +150,7 @@ static int lunatik_reply(struct lunatik_instance *instance, int command, struct 
 	return 0;
 }
 
-static int reply_state(lunatik_State *state, struct genl_info *info)
+static int send_state(lunatik_State *state, struct genl_info *info)
 {
 	struct sk_buff *obuff;
 	void *msg_head;
@@ -287,7 +287,7 @@ static int lunatikN_list(struct sk_buff *buff, struct genl_info *info)
 {
 	
 	struct lunatik_instance *instance;
-	struct send_message *msg;
+	struct reply_buffer *reply;
 	lunatik_State currstate;
 	u8 flags;
 
@@ -295,31 +295,28 @@ static int lunatikN_list(struct sk_buff *buff, struct genl_info *info)
 	
 	instance = lunatik_pernet(genl_info_net(info));
 	flags = *((u8 *)nla_data(info->attrs[FLAGS]));
-	msg = instance->sendmessage;
+	reply = instance->reply_buffer;
 
 	
 	if (flags & LUNATIK_INIT) {
 		// spin_lock(&(instance->sendmessage_lock));
-		fill_send_message(instance->sendmessage, instance); // TODO Check error and reply if an error occur
-		pr_info("Filled send structure\n");
-		lunatik_reply(instance, LIST_STATES, info);
-		pr_info("Send how many requests are needed to be made\n");
+		fill_reply_buffer(reply, instance); // TODO Check error and reply if an error occur
 		goto out;
 	}
 	
-	pr_info("Vou enviar o estado %d de %d\n", msg->curr_pos_to_send, msg->list_size);
+	pr_info("Vou enviar o estado %d de %d\n", reply->curr_pos_to_send, reply->list_size);
 
-	if (flags & LUNATIK_DONE) {
-		pr_info("Entrei aqui para dar um free");
-	
-		kfree(msg->states_list);
+	if (reply->curr_pos_to_send == reply->list_size) {
+		pr_info("Entrei aqui para dar dizer que eu terminei");
+		send_done_msg(LIST_STATES, LUNATIK_DONE, info);
+		kfree(reply->states_list);
 		pr_info("Terminei de enviar, agora o user space deveria para de me dar req\n");
 		// spin_unlock(&(instance->sendmessage_lock));
 		goto out;
 	}
 
-	currstate = msg->states_list[msg->curr_pos_to_send++];
-	if (reply_state(&currstate, info)) {
+	currstate = reply->states_list[reply->curr_pos_to_send++];
+	if (send_state(&currstate, info)) {
 		pr_err("Failed to send state information to user space\n");
 		return 0;
 	}

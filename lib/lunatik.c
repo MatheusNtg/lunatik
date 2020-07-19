@@ -281,7 +281,6 @@ nla_put_failure:
 int lunatikS_list(struct lunatik_session *session)
 {
 	struct nl_msg *msg;
-	int states_amount;
 	int err = -1;
 
 	if ((msg = prepare_message(session, LIST_STATES, LUNATIK_INIT)) == NULL) {
@@ -294,13 +293,10 @@ int lunatikS_list(struct lunatik_session *session)
 		return err;
 	}
 	
-	nl_recvmsgs_default(session->sock);
 	nl_wait_for_ack(session->sock);
 
-	states_amount = session->rcvmsg->states_count;
-
-	for(int i = 0; i < states_amount ; i++){
-		sleep(2);
+	while(!(session->rcvmsg->flags & LUNATIK_DONE)) {
+		// sleep(4);
 		if ((msg = prepare_message(session, LIST_STATES, 0)) == NULL) {
 			printf("Error preparing list message\n");
 			return err;
@@ -314,19 +310,6 @@ int lunatikS_list(struct lunatik_session *session)
 		nl_recvmsgs_default(session->sock);
 		nl_wait_for_ack(session->sock);
 	}
-
-	if ((msg = prepare_message(session, LIST_STATES, LUNATIK_DONE)) == NULL) {
-		printf("Error preparing list message\n");
-		return err;
-	}
-
-	if ((err = nl_send_auto(session->sock, msg)) < 0) {
-		printf("Failed sending message to kernel\n");
-		return err;
-	}
-	
-	nl_recvmsgs_default(session->sock);
-
 
 	return 0;
 }
@@ -343,8 +326,8 @@ static int message_handler(struct nl_msg *msg, void *arg)
 	nla_parse(attrs_tb, ATTRS_COUNT, genlmsg_attrdata(gnlh, 0),
               genlmsg_attrlen(gnlh, 0), NULL);
 	
-	if (attrs_tb[STATES_COUNT]) {
-		msg_holder->states_count = nla_get_u32(attrs_tb[STATES_COUNT]);
+	if (attrs_tb[FLAGS]) {
+		msg_holder->flags = nla_get_u8(attrs_tb[FLAGS]);
 	}
 
 	if (attrs_tb[STATE_NAME]) {
@@ -376,7 +359,7 @@ int lunatikS_init(struct lunatik_session *session, uint32_t pid)
 		printf("Failed to allocate buffer to incoming messages\n");
 		return err;
 	}
-	session->rcvmsg->states_count = 0;
+	session->rcvmsg->flags = 0;
 	session->rcvmsg->cmd = 0;
 
 	nl_socket_modify_cb(session->sock, NL_CB_MSG_IN, NL_CB_CUSTOM, message_handler, session->rcvmsg);

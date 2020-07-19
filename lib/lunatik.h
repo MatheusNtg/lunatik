@@ -29,7 +29,6 @@
 struct received_message {
     uint8_t flags;
     uint8_t cmd;
-    int states_count;
 };
 
 struct lunatik_session {
