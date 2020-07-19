@@ -150,6 +150,35 @@ static int send_done_msg(int command, int flags, struct genl_info *info)
 	return 0;
 }
 
+static int send_states_count(struct lunatik_instance *instance, struct genl_info *info)
+{
+	void *msg_head;
+	struct sk_buff *obuff;
+	int err = -1;
+
+	if ((obuff = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL)) == NULL) {
+		pr_err("Failed allocating message to an reply\n");
+		return -ENOMEM;
+	}
+
+	if ((msg_head = genlmsg_put_reply(obuff, info, &lunatik_family, 0, LIST_STATES)) == NULL) {
+		pr_err("Failed to put generic netlink header\n");
+		return err;
+	}
+
+	nla_put_u8(obuff, FLAGS, LUNATIK_INIT);
+	nla_put_u32(obuff, STATES_COUNT, atomic_read(&instance->states_count));
+	
+	genlmsg_end(obuff, msg_head);
+
+	if (genlmsg_reply(obuff, info) < 0) {
+		pr_err("Failed to send message to user space\n");
+		return err;
+	}
+
+	return 0;
+}
+
 static int send_state(lunatik_State *state, struct genl_info *info)
 {
 	struct sk_buff *obuff;
@@ -300,6 +329,7 @@ static int lunatikN_list(struct sk_buff *buff, struct genl_info *info)
 	if (flags & LUNATIK_INIT) {
 		spin_lock(&(instance->sendmessage_lock));
 		fill_reply_buffer(reply, instance); // TODO Check error and reply if an error occur
+		send_states_count(instance, info);
 		goto out;
 	}
 

@@ -294,6 +294,7 @@ int lunatikS_list(struct lunatik_session *session)
 	if ((err = send_simple_msg(session, LIST_STATES, LUNATIK_INIT)))
 		return err;
 
+	nl_recvmsgs_default(session->sock);
 	nl_wait_for_ack(session->sock);
 
 	while(!(session->rcvmsg->flags & LUNATIK_DONE)) {
