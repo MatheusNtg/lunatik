@@ -297,21 +297,16 @@ static int lunatikN_list(struct sk_buff *buff, struct genl_info *info)
 	flags = *((u8 *)nla_data(info->attrs[FLAGS]));
 	reply = instance->reply_buffer;
 
-	
 	if (flags & LUNATIK_INIT) {
-		// spin_lock(&(instance->sendmessage_lock));
+		spin_lock(&(instance->sendmessage_lock));
 		fill_reply_buffer(reply, instance); // TODO Check error and reply if an error occur
 		goto out;
 	}
-	
-	pr_info("Vou enviar o estado %d de %d\n", reply->curr_pos_to_send, reply->list_size);
 
 	if (reply->curr_pos_to_send == reply->list_size) {
-		pr_info("Entrei aqui para dar dizer que eu terminei");
 		send_done_msg(LIST_STATES, LUNATIK_DONE, info);
 		kfree(reply->states_list);
-		pr_info("Terminei de enviar, agora o user space deveria para de me dar req\n");
-		// spin_unlock(&(instance->sendmessage_lock));
+		spin_unlock(&(instance->sendmessage_lock));
 		goto out;
 	}
 
@@ -320,8 +315,6 @@ static int lunatikN_list(struct sk_buff *buff, struct genl_info *info)
 		pr_err("Failed to send state information to user space\n");
 		return 0;
 	}
-
-	
 
 out:
 	return 0;

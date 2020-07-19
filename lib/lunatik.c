@@ -56,6 +56,67 @@ nla_put_failure:
 	return NULL;
 }
 
+static int send_simple_msg(struct lunatik_session *session, int command, int flags)
+{
+	struct nl_msg *msg;
+	int err = -1;
+
+	if ((msg = prepare_message(session, command, flags)) == NULL) {
+		printf("Error preparing message\n");
+		goto error;
+	}
+
+	if ((err = nl_send_auto(session->sock, msg)) < 0) {
+		printf("Failed sending message to kernel\n");
+		goto error;
+	}
+
+	nlmsg_free(msg);
+	return 0;
+
+error:
+	nlmsg_free(msg);
+	return err;
+}
+
+static int send_fragment(struct lunatik_session *session, const char *original_script, int offset,
+	const char *state_name, int flags)
+{
+	struct nl_msg *msg;
+	char *fragment;
+	int err = -1;
+	if ((msg = prepare_message(session, EXECUTE_CODE, 0)) == NULL){
+		nlmsg_free(msg);
+		return err;
+	}
+
+	if ((fragment = malloc(sizeof(char) * LUNATIK_FRAGMENT_SIZE)) == NULL) {
+		printf("Failed to allocate memory to code fragment\n");
+		return -ENOMEM;
+	}
+	strncpy(fragment, original_script + (offset * LUNATIK_FRAGMENT_SIZE), LUNATIK_FRAGMENT_SIZE);
+
+	NLA_PUT_STRING(msg, STATE_NAME, state_name);
+	NLA_PUT_STRING(msg, CODE, fragment);
+
+	if (offset == 0)
+		NLA_PUT_U32(msg, SCRIPT_SIZE, strlen(original_script));
+		
+	NLA_PUT_U8(msg, FLAGS, flags);
+	
+	if ((err = nl_send_sync(session->sock, msg)) < 0) {
+		printf("Failed to send fragment\n %s\n", nl_geterror(err));
+		nlmsg_free(msg);
+		return err;
+	}
+	return 0;
+
+nla_put_failure:
+	printf("Failed putting attributes on the message\n");
+	free(fragment);
+	return err;
+}
+
 #ifndef _UNUSED
 static int handle_list_response(struct nflua_control *ctrl,
 	  struct nflua_response *r, struct nlmsghdr *nh, char *buffer)
@@ -150,7 +211,7 @@ int nflua_control_receive(struct nflua_control *ctrl,
 }
 #endif /* _UNUSED */
 
-int lunatikS_create(struct lunatik_session *session, struct lunatik_nl_state *cmd)
+int lunatikS_create(struct lunatik_session *session, struct lunatik_state *cmd)
 {
 	struct nl_msg *msg;
 	int ret = -1;
@@ -165,7 +226,7 @@ int lunatikS_create(struct lunatik_session *session, struct lunatik_nl_state *cm
 		printf("Failed to send message to kernel\n %s\n", nl_geterror(ret));
 		return ret;
 	}
-	printf("Vou receber da função %s\n", __func__);
+
 	if ((ret = nl_recvmsgs_default(session->sock))) {
 		printf("Failed to receive message from kernel: %s\n", nl_geterror(ret));
 		return ret;
@@ -191,7 +252,6 @@ int lunatikS_destroy(struct lunatik_session *session, const char *name)
 		printf("Failed to send destroy message:\n %s\n", nl_geterror(ret));
 		return ret;
 	}
-	printf("Vou receber da função %s\n", __func__);
 	nl_recvmsgs_default(session->sock);
 
 	return 0;
@@ -204,112 +264,45 @@ nla_put_failure:
 int lunatikS_execute(struct lunatik_session *session, const char *state_name,
     const char *script, size_t total_code_size)
 {
-	struct nl_msg *msg;
-	char *fragment;
 	int err = -1;
 	int parts = 0;
 
 	if (total_code_size <= LUNATIK_FRAGMENT_SIZE) {
-		if ((msg = prepare_message(session, EXECUTE_CODE, 0)) == NULL)
-			return err;
-
-		NLA_PUT_STRING(msg, STATE_NAME, state_name);
-		NLA_PUT_STRING(msg, CODE, script);
-		NLA_PUT_U8(msg, FLAGS, LUNATIK_INIT | LUNATIK_DONE);
-		NLA_PUT_U32(msg, SCRIPT_SIZE, total_code_size);
-
-		if ((err = nl_send_sync(session->sock, msg)) < 0) {
-			printf("Failed to send message\n %s\n", nl_geterror(err));
-			return err;
-		}
+		err = send_fragment(session, script, 0, state_name, LUNATIK_INIT | LUNATIK_DONE);
 	} else {
 		parts = (total_code_size % LUNATIK_FRAGMENT_SIZE == 0) ?
 			total_code_size / LUNATIK_FRAGMENT_SIZE :
 			(total_code_size / LUNATIK_FRAGMENT_SIZE) + 1;
 
-		fragment = malloc(sizeof(char) * LUNATIK_FRAGMENT_SIZE);
-
 		for (int i = 0; i < parts - 1; i++) {
-			if ((msg = prepare_message(session, EXECUTE_CODE, 0)) == NULL){
-				nlmsg_free(msg);
-				return err;
-			}
-
-			strncpy(fragment, script + (i * LUNATIK_FRAGMENT_SIZE), LUNATIK_FRAGMENT_SIZE);
-
-			NLA_PUT_STRING(msg, STATE_NAME, state_name);
-			NLA_PUT_STRING(msg, CODE, fragment);
-
-			if (i == 0){
-				NLA_PUT_U8(msg, FLAGS, LUNATIK_INIT | LUNATIK_MULTI);
-				NLA_PUT_U32(msg, SCRIPT_SIZE, total_code_size);
-			} else {
-				NLA_PUT_U8(msg, FLAGS, LUNATIK_MULTI);
-			}
-
-			if ((err = nl_send_sync(session->sock, msg)) < 0) {
-				printf("Failed to send fragment\n %s\n", nl_geterror(err));
-				nlmsg_free(msg);
-				return err;
-			}
+			if (i == 0)
+				err = send_fragment(session, script, i, state_name, LUNATIK_INIT | LUNATIK_MULTI);
+			else
+				err = send_fragment(session, script, i, state_name, LUNATIK_MULTI);
 		}
 
-		if ((msg = prepare_message(session, EXECUTE_CODE, 0)) == NULL)
-			return err;
-
-		strncpy(fragment, script + ((parts - 1) * LUNATIK_FRAGMENT_SIZE), LUNATIK_FRAGMENT_SIZE);
-
-		NLA_PUT_STRING(msg, STATE_NAME, state_name);
-		NLA_PUT_STRING(msg, CODE, fragment);
-		NLA_PUT_U8(msg, FLAGS, LUNATIK_DONE);
-
-		if ((err = nl_send_sync(session->sock, msg)) < 0) {
-			printf("Failed to send fragment\n %s\n", nl_geterror(err));
-			return err;
-		}
-
-		free(fragment);
+		err = send_fragment(session, script, parts - 1, state_name, LUNATIK_DONE);
 	}
 
-	return 0;
-
-nla_put_failure:
-	printf("Failed to put netlink attributes\n");
 	return err;
 }
 
 int lunatikS_list(struct lunatik_session *session)
 {
-	struct nl_msg *msg;
 	int err = -1;
 
-	if ((msg = prepare_message(session, LIST_STATES, LUNATIK_INIT)) == NULL) {
-		printf("Error preparing list message\n");
+	if ((err = send_simple_msg(session, LIST_STATES, LUNATIK_INIT)))
 		return err;
-	}
 
-	if ((err = nl_send_auto(session->sock, msg)) < 0) {
-		printf("Failed sending message to kernel\n");
-		return err;
-	}
-	
 	nl_wait_for_ack(session->sock);
 
 	while(!(session->rcvmsg->flags & LUNATIK_DONE)) {
-		// sleep(4);
-		if ((msg = prepare_message(session, LIST_STATES, 0)) == NULL) {
-			printf("Error preparing list message\n");
-			return err;
-		}
-
-		if ((err = nl_send_auto(session->sock, msg)) < 0) {
-			printf("Failed sending message to kernel\n");
-			return err;
-		}
-		
+		send_simple_msg(session, LIST_STATES, 0);		
 		nl_recvmsgs_default(session->sock);
 		nl_wait_for_ack(session->sock);
 	}
+
+	session->rcvmsg->flags = 0;
 
 	return 0;
 }
@@ -321,7 +314,7 @@ static int message_handler(struct nl_msg *msg, void *arg)
 	struct nlattr * attrs_tb[ATTRS_COUNT + 1];
 	struct received_message *msg_holder = (struct received_message *) arg;
 
-	nl_msg_dump(msg, stdout);
+	// nl_msg_dump(msg, stdout);
 
 	nla_parse(attrs_tb, ATTRS_COUNT, genlmsg_attrdata(gnlh, 0),
               genlmsg_attrlen(gnlh, 0), NULL);
@@ -331,7 +324,7 @@ static int message_handler(struct nl_msg *msg, void *arg)
 	}
 
 	if (attrs_tb[STATE_NAME]) {
-		// printf("O nome que eu recebi: %s\n", nla_get_string(attrs_tb[STATE_NAME]));
+		printf("O nome que eu recebi: %s\n", nla_get_string(attrs_tb[STATE_NAME]));
 	}
 
 	return NL_OK;

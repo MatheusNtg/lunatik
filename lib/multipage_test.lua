@@ -1,6 +1,6 @@
 local lunatik = require'lunatik'
 
-local client = lunatik.control()
+local client = lunatik.session()
 
 local script = [[
 	print'Início do módulo'
@@ -611,6 +611,6 @@ local script = [[
 	print'Fim do módulo'
 ]]
 
-client:create('another', 1000000)
-client:execute('another', script)
+local s1 = client:create('another', 1000000)
+s1:execute(script)
 client:destroy'another'

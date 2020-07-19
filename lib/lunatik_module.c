@@ -117,9 +117,9 @@ static struct lunatik_session *getsession(lua_State *L)
 	return c;
 }
 
-static struct lunatik_nl_state *getnlstate(lua_State *L)
+static struct lunatik_state *getnlstate(lua_State *L)
 {
-	struct lunatik_nl_state *s = luaL_checkudata(L, 1, "states.control");
+	struct lunatik_state *s = luaL_checkudata(L, 1, "states.control");
 	if (s == NULL)
 		luaL_argerror(L, 1, "Failed to get state");
 	return s;
@@ -176,7 +176,7 @@ static int lsession_create(lua_State *L)
 	size_t len;
 	const char *name = luaL_checklstring(L, 2, &len);
 	lua_Integer maxalloc = luaL_optinteger(L, 3, DEFAULT_MAXALLOC_BYTES);
-	struct lunatik_nl_state *state = lua_newuserdata(L, sizeof(struct lunatik_nl_state));
+	struct lunatik_state *state = lua_newuserdata(L, sizeof(struct lunatik_state));
 
 
 	if (len >= LUNATIK_NAME_MAXSIZE)
@@ -206,7 +206,7 @@ static int lsession_destroy(lua_State *L)
 
 static int lstate_execute(lua_State *L)
 {
-	struct lunatik_nl_state *s = getnlstate(L);
+	struct lunatik_state *s = getnlstate(L);
 	struct lunatik_session *session = s->session;
 	const char *name = s->name;
 	size_t len;
@@ -218,7 +218,7 @@ static int lstate_execute(lua_State *L)
 }
 
 static int lstate_getname(lua_State *L) {
-	struct lunatik_nl_state *s = getnlstate(L);
+	struct lunatik_state *s = getnlstate(L);
 	
 	lua_pushstring(L, s->name);
 
@@ -226,7 +226,7 @@ static int lstate_getname(lua_State *L) {
 }
 
 static int lstate_getmaxalloc(lua_State *L) {
-	struct lunatik_nl_state *s = getnlstate(L);
+	struct lunatik_state *s = getnlstate(L);
 	
 	lua_pushinteger(L, s->maxalloc);
 

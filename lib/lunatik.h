@@ -38,7 +38,7 @@ struct lunatik_session {
     uint32_t pid;
 };
 
-struct lunatik_nl_state {
+struct lunatik_state {
     struct lunatik_session *session;
     uint32_t maxalloc;
     uint32_t curralloc;
@@ -81,7 +81,7 @@ int lunatikS_init(struct lunatik_session *session, uint32_t pid);
 void nflua_control_close(struct nflua_control *ctrl);
 #endif /*_UNUSED*/
 
-int lunatikS_create(struct lunatik_session *session, struct lunatik_nl_state *s);
+int lunatikS_create(struct lunatik_session *session, struct lunatik_state *s);
 
 int lunatikS_destroy(struct lunatik_session *session, const char *name);
 
