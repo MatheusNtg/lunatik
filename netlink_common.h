@@ -37,6 +37,8 @@ enum lunatik_attrs {
 	CODE,
 	FLAGS,
 	SCRIPT_SIZE,
+	OP_SUCESS,
+	OP_ERROR,
 	ATTRS_COUNT
 #define ATTRS_MAX (ATTRS_COUNT - 1)
 };

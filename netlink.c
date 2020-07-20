@@ -47,6 +47,8 @@ struct nla_policy lunatik_policy[ATTRS_COUNT] = {
 	[SCRIPT_SIZE] = { .type = NLA_U32 }, //TODO See what is the maximum script size accepted by the module
 	[STATES_COUNT]= { .type = NLA_U32},	
 	[FLAGS] 	  = { .type = NLA_U8 },
+	[OP_SUCESS]   = { .type = NLA_U8 },
+	[OP_ERROR]	  = { .type = NLA_U8},
 };
 
 static const struct genl_ops l_ops[] = {
@@ -215,9 +217,40 @@ static int send_state(lunatik_State *state, struct genl_info *info)
 	return 0;
 }
 
+static void reply_with(int reply, int command, struct genl_info *info)
+{
+	struct sk_buff *obuff;
+	void *msg_head;
+
+	if ((obuff = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL)) == NULL) {
+		pr_err("Failed allocating message to an reply\n");
+		return;
+	}
+
+	if ((msg_head = genlmsg_put_reply(obuff, info, &lunatik_family, 0, command)) == NULL) {
+		pr_err("Failed to put generic netlink header\n");
+		return;
+	}
+
+	if (nla_put_u8(obuff, reply, 1)) {
+		pr_err("Failed to put attributes on socket buffer\n");
+		return;
+	}
+
+	genlmsg_end(obuff, msg_head);
+
+	if (genlmsg_reply(obuff, info) < 0) {
+		pr_err("Failed to send message to user space\n");
+		return;
+	}
+
+	pr_debug("Message sent to user space\n");
+}
+
 static int lunatikN_newstate(struct sk_buff *buff, struct genl_info *info)
 {
 	struct lunatik_instance *instance;
+	struct lunatik_state *s;
 	char *state_name;
 	u32 *max_alloc;
 	u32 pid;
@@ -229,7 +262,9 @@ static int lunatikN_newstate(struct sk_buff *buff, struct genl_info *info)
 	max_alloc = (u32 *)nla_data(info->attrs[MAX_ALLOC]);
 	pid = info->snd_portid;
 
-	lunatik_netnewstate(instance, *max_alloc, state_name);
+	s = lunatik_netnewstate(instance, *max_alloc, state_name);
+
+	s == NULL ? reply_with(OP_ERROR, CREATE_STATE, info) : reply_with(OP_SUCESS, CREATE_STATE, info);
 
 	return 0;
 }

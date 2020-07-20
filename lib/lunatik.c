@@ -231,6 +231,12 @@ int lunatikS_create(struct lunatik_session *session, struct lunatik_state *cmd)
 		printf("Failed to receive message from kernel: %s\n", nl_geterror(ret));
 		return ret;
 	}
+
+	nl_wait_for_ack(session->sock);
+	
+	if (session->cb_result == CB_ERROR)
+		return -1;
+
 	return 0;
 
 nla_put_failure:
@@ -297,13 +303,13 @@ int lunatikS_list(struct lunatik_session *session)
 	nl_recvmsgs_default(session->sock);
 	nl_wait_for_ack(session->sock);
 
-	while(!(session->rcvmsg->flags & LUNATIK_DONE)) {
-		send_simple_msg(session, LIST_STATES, 0);		
-		nl_recvmsgs_default(session->sock);
-		nl_wait_for_ack(session->sock);
-	}
+	// while(!(session->rcvmsg->flags & LUNATIK_DONE)) {
+	// 	send_simple_msg(session, LIST_STATES, 0);		
+	// 	nl_recvmsgs_default(session->sock);
+	// 	nl_wait_for_ack(session->sock);
+	// }
 
-	session->rcvmsg->flags = 0;
+	// session->rcvmsg->flags = 0;
 
 	return 0;
 }
@@ -313,19 +319,24 @@ static int message_handler(struct nl_msg *msg, void *arg)
 	struct nlmsghdr *nh = nlmsg_hdr(msg);
 	struct genlmsghdr *gnlh = genlmsg_hdr(nh);
 	struct nlattr * attrs_tb[ATTRS_COUNT + 1];
-	struct received_message *msg_holder = (struct received_message *) arg;
+	struct lunatik_session *session = (struct lunatik_session *) arg;
 
 	// nl_msg_dump(msg, stdout);
 
-	nla_parse(attrs_tb, ATTRS_COUNT, genlmsg_attrdata(gnlh, 0),
-              genlmsg_attrlen(gnlh, 0), NULL);
-	
-	if (attrs_tb[FLAGS]) {
-		msg_holder->flags = nla_get_u8(attrs_tb[FLAGS]);
+	if (nla_parse(attrs_tb, ATTRS_COUNT, genlmsg_attrdata(gnlh, 0),
+              genlmsg_attrlen(gnlh, 0), NULL))
+	{
+		printf("Error parsing attributes\n");
+		session->cb_result = CB_ERROR;
+		return NL_OK;
 	}
-
-	if (attrs_tb[STATE_NAME]) {
-		printf("O nome que eu recebi: %s\n", nla_get_string(attrs_tb[STATE_NAME]));
+	
+	if (attrs_tb[OP_SUCESS] && nla_get_u8(attrs_tb[OP_SUCESS])) {
+		session->cb_result = CB_SUCCESS;
+		return NL_OK;
+	} else if (attrs_tb[OP_ERROR] && nla_get_u8(attrs_tb[OP_ERROR])) {
+		session->cb_result = CB_ERROR;
+		return NL_OK;
 	}
 
 	return NL_OK;
@@ -347,16 +358,7 @@ int lunatikS_init(struct lunatik_session *session, uint32_t pid)
 	if ((session->family = genl_ctrl_resolve(session->sock, LUNATIK_FAMILY)) < 0)
 		return err;
 
-	session->rcvmsg = malloc(sizeof(struct received_message));
-
-	if (session->rcvmsg == NULL) {
-		printf("Failed to allocate buffer to incoming messages\n");
-		return err;
-	}
-	session->rcvmsg->flags = 0;
-	session->rcvmsg->cmd = 0;
-
-	nl_socket_modify_cb(session->sock, NL_CB_MSG_IN, NL_CB_CUSTOM, message_handler, session->rcvmsg);
+	nl_socket_modify_cb(session->sock, NL_CB_MSG_IN, NL_CB_CUSTOM, message_handler, session);
 	session->pid = pid;
 
 	return 0;

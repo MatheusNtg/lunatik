@@ -26,14 +26,14 @@
 #include "../netlink_common.h"
 #include "../lunatik_conf.h"
 
-struct received_message {
-    uint8_t flags;
-    uint8_t cmd;
+enum callback_result {
+    CB_SUCCESS,
+    CB_ERROR,
 };
 
 struct lunatik_session {
     struct nl_sock *sock;
-    struct received_message *rcvmsg;
+    enum callback_result cb_result;
     int family;
     uint32_t pid;
 };

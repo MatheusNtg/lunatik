@@ -187,9 +187,8 @@ static int lsession_create(lua_State *L)
 	state->session = session;
 
 	if (lunatikS_create(session, state)) {
-		printf("Failed to create an state\n");
-		lua_pushboolean(L, false);
-		return 1;
+		pusherrmsg(L, "Failed to create the state\n");
+		return 2;
 	}
 
 	luaL_setmetatable(L, "states.control");
