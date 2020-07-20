@@ -31,11 +31,10 @@ enum callback_result {
     CB_ERROR,
 };
 
-struct lunatik_session {
-    struct nl_sock *sock;
-    enum callback_result cb_result;
-    int family;
-    uint32_t pid;
+enum session_status {
+    SESSION_FREE,
+    SESSION_RECEIVING,
+    SESSION_INIT_LIST,
 };
 
 struct lunatik_state {
@@ -43,6 +42,21 @@ struct lunatik_state {
     uint32_t maxalloc;
     uint32_t curralloc;
     char name[LUNATIK_NAME_MAXSIZE];
+};
+
+struct states_list {
+    struct lunatik_state *states;
+    size_t list_size;
+    unsigned int tail;
+};
+
+struct lunatik_session {
+    struct nl_sock *sock;
+    struct states_list states_list;
+    enum session_status status;
+    enum callback_result cb_result;
+    int family;
+    uint32_t pid;
 };
 
 #ifndef _UNUSED

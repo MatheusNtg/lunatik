@@ -124,7 +124,7 @@ static int fill_reply_buffer(struct reply_buffer *message, struct lunatik_instan
 	return 0;
 }
 
-static int send_done_msg(int command, int flags, struct genl_info *info)
+static int send_done_msg(int command, struct genl_info *info)
 {
 	void *msg_head;
 	struct sk_buff *obuff;
@@ -140,7 +140,7 @@ static int send_done_msg(int command, int flags, struct genl_info *info)
 		return err;
 	}
 
-	nla_put_u8(obuff, FLAGS, flags);
+	nla_put_u8(obuff, FLAGS, LUNATIK_DONE);
 	
 	genlmsg_end(obuff, msg_head);
 
@@ -361,13 +361,14 @@ static int lunatikN_list(struct sk_buff *buff, struct genl_info *info)
 	lunatik_State currstate;
 	u8 flags;
 
-	pr_debug("Received a LIST_STATES command\n");
+	pr_info("Received a LIST_STATES command\n");
 	
 	instance = lunatik_pernet(genl_info_net(info));
 	flags = *((u8 *)nla_data(info->attrs[FLAGS]));
 	reply = instance->reply_buffer;
 
 	if (flags & LUNATIK_INIT) {
+		pr_info("Vou inicializar o buffe\n");
 		spin_lock(&(instance->sendmessage_lock));
 		fill_reply_buffer(reply, instance); // TODO Check error and reply if an error occur
 		send_states_count(instance, info);
@@ -375,13 +376,15 @@ static int lunatikN_list(struct sk_buff *buff, struct genl_info *info)
 	}
 
 	if (reply->curr_pos_to_send == reply->list_size) {
-		send_done_msg(LIST_STATES, LUNATIK_DONE, info);
+		pr_info("Vou responder que terminei\n");
+		send_done_msg(LIST_STATES, info);
 		kfree(reply->states_list);
 		spin_unlock(&(instance->sendmessage_lock));
 		goto out;
 	}
 
 	currstate = reply->states_list[reply->curr_pos_to_send++];
+	pr_info("Enviei o estado %d de %d\n", reply->curr_pos_to_send - 1, atomic_read(&instance->states_count));
 	if (send_state(&currstate, info)) {
 		pr_err("Failed to send state information to user space\n");
 		return 0;

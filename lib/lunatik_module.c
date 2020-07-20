@@ -243,14 +243,26 @@ static int lstate_getmaxalloc(lua_State *L) {
 	return 1;
 }
 
+static void buildlist(lua_State *L, struct lunatik_state *states, size_t n);
+
 static int lsession_list(lua_State *L)
 {
 	struct lunatik_session *session = getsession(L);
-	return pushioresult(L, lunatikS_list(session));
+	struct states_list list;
+	int status;
+	
+	status = lunatikS_list(session);
+	if (status){
+		lua_pushnil(L);
+		return 1;
+	}
+
+	list = session->states_list;
+	buildlist(L, list.states, list.list_size);
+	return 1;
 }
 
-#ifndef _UNUSED
-static void buildlist(lua_State *L, struct nflua_nl_state *states, size_t n)
+static void buildlist(lua_State *L, struct lunatik_state *states, size_t n)
 {
 	size_t i;
 
@@ -266,7 +278,7 @@ static void buildlist(lua_State *L, struct nflua_nl_state *states, size_t n)
 		lua_seti(L, -2, i + 1);
 	}
 }
-
+#ifndef _UNUSED
 static int lcontrol_receive(lua_State *L)
 {
 	struct control *c = getcontrol(L);

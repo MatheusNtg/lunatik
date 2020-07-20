@@ -318,23 +318,50 @@ int lunatikS_list(struct lunatik_session *session)
 	nl_recvmsgs_default(session->sock);
 	nl_wait_for_ack(session->sock);
 
-	// while(!(session->rcvmsg->flags & LUNATIK_DONE)) {
-	// 	send_simple_msg(session, LIST_STATES, 0);		
-	// 	nl_recvmsgs_default(session->sock);
-	// 	nl_wait_for_ack(session->sock);
-	// }
+	session->status = SESSION_RECEIVING;
 
-	// session->rcvmsg->flags = 0;
+	while (session->status == SESSION_RECEIVING) {
+		send_simple_msg(session, LIST_STATES, 0);
+		nl_recvmsgs_default(session->sock);
+		nl_wait_for_ack(session->sock);
+	}
 
 	return 0;
 }
 
-static int message_handler(struct nl_msg *msg, void *arg)
+static int add_state_on_list(struct lunatik_state state, struct states_list *list)
+{
+	if (list->tail == list->list_size) {
+		printf("Trying to add elements to the list out of bounds\n");
+		return -1;
+	} else {
+		list->states[list->tail++] = state;
+	}
+
+	return 0;
+}
+
+static int init_list(struct states_list *list, int size)
+{
+	if ((list->states = malloc(size * sizeof(struct lunatik_state))) == NULL) {
+		printf("Failed to allocate memory to the list\n");
+		return -1;
+	}
+
+	list->list_size = size;
+	list->tail = 0;
+
+	return 0;
+}
+
+static int response_handler(struct nl_msg *msg, void *arg)
 {
 	struct nlmsghdr *nh = nlmsg_hdr(msg);
 	struct genlmsghdr *gnlh = genlmsg_hdr(nh);
-	struct nlattr * attrs_tb[ATTRS_COUNT + 1];
 	struct lunatik_session *session = (struct lunatik_session *) arg;
+	struct nlattr * attrs_tb[ATTRS_COUNT + 1];
+	struct lunatik_state state;
+	int list_size;
 
 	// nl_msg_dump(msg, stdout);
 
@@ -345,15 +372,43 @@ static int message_handler(struct nl_msg *msg, void *arg)
 		session->cb_result = CB_ERROR;
 		return NL_OK;
 	}
-	
-	if (attrs_tb[OP_SUCESS] && nla_get_u8(attrs_tb[OP_SUCESS])) {
-		session->cb_result = CB_SUCCESS;
-		return NL_OK;
-	} else if (attrs_tb[OP_ERROR] && nla_get_u8(attrs_tb[OP_ERROR])) {
-		session->cb_result = CB_ERROR;
-		return NL_OK;
+	switch (gnlh->cmd)
+	{
+	case CREATE_STATE:
+	case DESTROY_STATE:
+	case EXECUTE_CODE:
+		if (attrs_tb[OP_SUCESS] && nla_get_u8(attrs_tb[OP_SUCESS])) {
+			session->cb_result = CB_SUCCESS;
+		} else if (attrs_tb[OP_ERROR] && nla_get_u8(attrs_tb[OP_ERROR])) {
+			session->cb_result = CB_ERROR;
+		}
+		break;
+	case LIST_STATES:
+		if (attrs_tb[FLAGS] && (nla_get_u8(attrs_tb[FLAGS])  & LUNATIK_INIT) && attrs_tb[STATES_COUNT]){
+			session->status = SESSION_INIT_LIST;
+			list_size = nla_get_u32(attrs_tb[STATES_COUNT]);
+			init_list(&session->states_list, list_size);
+		} else if (attrs_tb[FLAGS] && (nla_get_u8(attrs_tb[FLAGS]) & LUNATIK_DONE)) {
+			session->status = SESSION_FREE;
+		} else {
+			session->status = SESSION_RECEIVING;
+			if (!(attrs_tb[STATE_NAME] && attrs_tb[MAX_ALLOC] && attrs_tb[CURR_ALLOC]))
+				goto nla_get_failure;
+		
+			strncpy(state.name, nla_get_string(attrs_tb[STATE_NAME]), LUNATIK_NAME_MAXSIZE);
+			state.maxalloc = nla_get_u32(attrs_tb[MAX_ALLOC]);
+			state.curralloc = nla_get_u32(attrs_tb[CURR_ALLOC]);
+			add_state_on_list(state, &session->states_list);
+		}
+		break;
+	default:
+		break;
 	}
 
+	return NL_OK;
+
+nla_get_failure:
+	printf("Failed to get attributes\n");
 	return NL_OK;
 }
 
@@ -373,7 +428,7 @@ int lunatikS_init(struct lunatik_session *session, uint32_t pid)
 	if ((session->family = genl_ctrl_resolve(session->sock, LUNATIK_FAMILY)) < 0)
 		return err;
 
-	nl_socket_modify_cb(session->sock, NL_CB_MSG_IN, NL_CB_CUSTOM, message_handler, session);
+	nl_socket_modify_cb(session->sock, NL_CB_MSG_IN, NL_CB_CUSTOM, response_handler, session);
 	session->pid = pid;
 
 	return 0;
