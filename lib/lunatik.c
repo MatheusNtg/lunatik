@@ -296,6 +296,8 @@ int lunatikS_execute(struct lunatik_session *session, const char *state_name,
 			else
 				err = send_fragment(session, script, i, state_name, LUNATIK_MULTI);
 
+			nl_wait_for_ack(session->sock);
+
 			if (err)
 				return err;
 		}

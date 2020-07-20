@@ -28,7 +28,6 @@
 #include <linux/netlink.h>
 #include <net/sock.h>
 
-
 #include "luautil.h"
 #include "states.h"
 #include "netlink_common.h"

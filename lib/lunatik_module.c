@@ -259,6 +259,7 @@ static int lsession_list(lua_State *L)
 
 	list = session->states_list;
 	buildlist(L, list.states, list.list_size);
+	free(list.states);
 	return 1;
 }
 
