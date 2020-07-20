@@ -339,11 +339,11 @@ static int lunatikN_close(struct sk_buff *buff, struct genl_info *info)
 	
 	pr_debug("Received a DESTROY_STATE command\n");
 
-	if (lunatik_netclose(instance, state_name)) {
-		pr_err("Failed to destroy state %s\n", state_name);
-		return 0;
-	}	
-
+	if (lunatik_netclose(instance, state_name))
+		reply_with(OP_ERROR, DESTROY_STATE, info);
+	else
+		reply_with(OP_SUCESS, DESTROY_STATE, info);
+	
 	return 0;
 }
 

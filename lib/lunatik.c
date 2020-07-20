@@ -258,7 +258,16 @@ int lunatikS_destroy(struct lunatik_session *session, const char *name)
 		printf("Failed to send destroy message:\n %s\n", nl_geterror(ret));
 		return ret;
 	}
-	nl_recvmsgs_default(session->sock);
+
+	if ((ret = nl_recvmsgs_default(session->sock))) {
+		printf("Failed to receive message from kernel: %s\n", nl_geterror(ret));
+		return ret;
+	}
+
+	nl_wait_for_ack(session->sock);
+	
+	if (session->cb_result == CB_ERROR)
+		return -1;
 
 	return 0;
 

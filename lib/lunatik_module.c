@@ -198,9 +198,15 @@ static int lsession_create(lua_State *L)
 
 static int lsession_destroy(lua_State *L)
 {
-	struct lunatik_session *c = getsession(L);
+	struct lunatik_session *session = getsession(L);
 	const char *name = luaL_checkstring(L, 2);
-	return pushioresult(L, lunatikS_destroy(c, name));
+	if (lunatikS_destroy(session, name)){
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	lua_pushboolean(L, true);
+	return 1;
 }
 
 static int lstate_execute(lua_State *L)
