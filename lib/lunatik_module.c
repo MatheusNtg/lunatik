@@ -218,8 +218,13 @@ static int lstate_execute(lua_State *L)
 	const char *payload = luaL_checklstring(L, 2, &len);
 	int status = lunatikS_execute(session, name, payload, len);
 
-	if (status > 0) return pusherrmsg(L, "pending");
-	return pushioresult(L, status);
+	if (status){
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	lua_pushboolean(L, true);
+	return 1;
 }
 
 static int lstate_getname(lua_State *L) {

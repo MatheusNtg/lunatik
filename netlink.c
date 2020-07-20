@@ -274,6 +274,7 @@ static int lunatikN_exec(struct sk_buff *buff, struct genl_info *info)
 	struct lunatik_state *s;
 	struct lunatik_instance *instance;
 	const char *finalscript;
+	int err;
 	char *fragment;
 	char *state_name;
 	u8 flags;
@@ -287,6 +288,7 @@ static int lunatikN_exec(struct sk_buff *buff, struct genl_info *info)
 
 	if ((s = lunatik_netstatelookup(instance, state_name)) == NULL) {
 		pr_err("Error finding klua state\n");
+		reply_with(OP_ERROR, EXECUTE_CODE, info);
 		return 0;
 	}
 
@@ -298,6 +300,7 @@ static int lunatikN_exec(struct sk_buff *buff, struct genl_info *info)
 		spin_lock(&s->lock);
 		if ((s->buffer = kmalloc(sizeof(luaL_Buffer), GFP_KERNEL)) == NULL) {
 			pr_err("Failed allocating memory to code buffer\n");
+			reply_with(OP_ERROR, EXECUTE_CODE, info);
 			return 0;
 		}
 		luaL_buffinit(s->L, s->buffer);		
@@ -315,15 +318,18 @@ static int lunatikN_exec(struct sk_buff *buff, struct genl_info *info)
 		
 		if (!lunatik_stateget(s)) {
 			pr_err("Failed to get state\n");
+			reply_with(OP_ERROR, EXECUTE_CODE, info);
 			return 0;
 		}
 
-		if (luaU_dostring(s->L, finalscript, s->scriptsize, "Lua in kernel")) {
+		if ((err = luaU_dostring(s->L, finalscript, s->scriptsize, "Lua in kernel"))) {
 			pr_err("%s\n", lua_tostring(s->L, -1));
 		}
 		
 		spin_unlock(&s->lock);
 		lunatik_stateput(s);
+		
+		err ? reply_with(OP_ERROR, EXECUTE_CODE, info) : reply_with(OP_SUCESS, EXECUTE_CODE, info);
 	}
 
 	return 0;

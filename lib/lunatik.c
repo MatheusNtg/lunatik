@@ -104,11 +104,14 @@ static int send_fragment(struct lunatik_session *session, const char *original_s
 		
 	NLA_PUT_U8(msg, FLAGS, flags);
 	
-	if ((err = nl_send_sync(session->sock, msg)) < 0) {
+	if ((err = nl_send_auto(session->sock, msg)) < 0) {
 		printf("Failed to send fragment\n %s\n", nl_geterror(err));
 		nlmsg_free(msg);
 		return err;
 	}
+
+	nlmsg_free(msg);
+
 	return 0;
 
 nla_put_failure:
@@ -211,6 +214,22 @@ int nflua_control_receive(struct nflua_control *ctrl,
 }
 #endif /* _UNUSED */
 
+static int receive_op_result(struct lunatik_session *session){
+	int ret;
+
+	if ((ret = nl_recvmsgs_default(session->sock))) {
+		printf("Failed to receive message from kernel: %s\n", nl_geterror(ret));
+		return ret;
+	}
+
+	nl_wait_for_ack(session->sock);
+
+	if (session->cb_result == CB_ERROR)
+		return -1;
+
+	return 0;
+}
+
 int lunatikS_create(struct lunatik_session *session, struct lunatik_state *cmd)
 {
 	struct nl_msg *msg;
@@ -226,18 +245,8 @@ int lunatikS_create(struct lunatik_session *session, struct lunatik_state *cmd)
 		printf("Failed to send message to kernel\n %s\n", nl_geterror(ret));
 		return ret;
 	}
-
-	if ((ret = nl_recvmsgs_default(session->sock))) {
-		printf("Failed to receive message from kernel: %s\n", nl_geterror(ret));
-		return ret;
-	}
-
-	nl_wait_for_ack(session->sock);
 	
-	if (session->cb_result == CB_ERROR)
-		return -1;
-
-	return 0;
+	return receive_op_result(session);
 
 nla_put_failure:
 	printf("Failed to put attributes on message\n");
@@ -259,17 +268,7 @@ int lunatikS_destroy(struct lunatik_session *session, const char *name)
 		return ret;
 	}
 
-	if ((ret = nl_recvmsgs_default(session->sock))) {
-		printf("Failed to receive message from kernel: %s\n", nl_geterror(ret));
-		return ret;
-	}
-
-	nl_wait_for_ack(session->sock);
-	
-	if (session->cb_result == CB_ERROR)
-		return -1;
-
-	return 0;
+	return receive_op_result(session);
 
 nla_put_failure:
 	printf("Failed to put attributes on netlink message\n");
@@ -284,6 +283,8 @@ int lunatikS_execute(struct lunatik_session *session, const char *state_name,
 
 	if (total_code_size <= LUNATIK_FRAGMENT_SIZE) {
 		err = send_fragment(session, script, 0, state_name, LUNATIK_INIT | LUNATIK_DONE);
+		if (err)
+			return err;
 	} else {
 		parts = (total_code_size % LUNATIK_FRAGMENT_SIZE == 0) ?
 			total_code_size / LUNATIK_FRAGMENT_SIZE :
@@ -294,12 +295,17 @@ int lunatikS_execute(struct lunatik_session *session, const char *state_name,
 				err = send_fragment(session, script, i, state_name, LUNATIK_INIT | LUNATIK_MULTI);
 			else
 				err = send_fragment(session, script, i, state_name, LUNATIK_MULTI);
+
+			if (err)
+				return err;
 		}
 
 		err = send_fragment(session, script, parts - 1, state_name, LUNATIK_DONE);
+		if (err)
+			return err;
 	}
 
-	return err;
+	return receive_op_result(session);
 }
 
 int lunatikS_list(struct lunatik_session *session)
