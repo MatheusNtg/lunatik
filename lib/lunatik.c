@@ -81,7 +81,7 @@ error:
 }
 
 static int send_fragment(struct lunatik_session *session, const char *original_script, int offset,
-	const char *state_name, int flags)
+	const char *state_name, const char *script_name, int flags)
 {
 	struct nl_msg *msg;
 	char *fragment;
@@ -102,8 +102,12 @@ static int send_fragment(struct lunatik_session *session, const char *original_s
 
 	if (offset == 0)
 		NLA_PUT_U32(msg, SCRIPT_SIZE, strlen(original_script));
-		
+
+	if (flags & LUNATIK_DONE)
+		NLA_PUT_STRING(msg, SCRIPT_NAME, script_name);
+
 	NLA_PUT_U8(msg, FLAGS, flags);
+
 	
 	if ((err = nl_send_auto(session->sock, msg)) < 0) {
 		printf("Failed to send fragment\n %s\n", nl_geterror(err));
@@ -183,13 +187,13 @@ nla_put_failure:
 }
 
 int lunatikS_execute(struct lunatik_session *session, const char *state_name,
-    const char *script, size_t total_code_size)
+    const char *script, const char *script_name, size_t total_code_size)
 {
 	int err = -1;
 	int parts = 0;
 
 	if (total_code_size <= LUNATIK_FRAGMENT_SIZE) {
-		err = send_fragment(session, script, 0, state_name, LUNATIK_INIT | LUNATIK_DONE);
+		err = send_fragment(session, script, 0, state_name, script_name, LUNATIK_INIT | LUNATIK_DONE);
 		if (err)
 			return err;
 	} else {
@@ -199,9 +203,9 @@ int lunatikS_execute(struct lunatik_session *session, const char *state_name,
 
 		for (int i = 0; i < parts - 1; i++) {
 			if (i == 0)
-				err = send_fragment(session, script, i, state_name, LUNATIK_INIT | LUNATIK_MULTI);
+				err = send_fragment(session, script, i, state_name, script_name, LUNATIK_INIT | LUNATIK_MULTI);
 			else
-				err = send_fragment(session, script, i, state_name, LUNATIK_MULTI);
+				err = send_fragment(session, script, i, state_name, script_name, LUNATIK_MULTI);
 
 			nl_wait_for_ack(session->sock);
 
@@ -209,7 +213,7 @@ int lunatikS_execute(struct lunatik_session *session, const char *state_name,
 				return err;
 		}
 
-		err = send_fragment(session, script, parts - 1, state_name, LUNATIK_DONE);
+		err = send_fragment(session, script, parts - 1, state_name, script_name, LUNATIK_DONE);
 		if (err)
 			return err;
 	}
@@ -319,7 +323,7 @@ nla_get_failure:
 	return NL_OK;
 }
 
-int lunatikS_init(struct lunatik_session *session, uint32_t pid)
+int lunatikS_init(struct lunatik_session *session)
 {
 	int err = -1;
 
@@ -336,21 +340,20 @@ int lunatikS_init(struct lunatik_session *session, uint32_t pid)
 		return err;
 
 	nl_socket_modify_cb(session->sock, NL_CB_MSG_IN, NL_CB_CUSTOM, response_handler, session);
-	session->pid = pid;
+	session->fd = nl_socket_get_fd(session->sock);
 
 	return 0;
 }
 
-#ifndef _UNUSED
-void nflua_control_close(struct nflua_control *ctrl)
+void lunatikS_end(struct lunatik_session *session)
 {
-	if (ctrl != NULL) {
-		close(ctrl->fd);
-		ctrl->fd = -1;
-		ctrl->state = NFLUA_SOCKET_CLOSED;
+	if (session != NULL){
+		nl_socket_free(session->sock);
+		session->fd = -1;
 	}
 }
 
+#ifndef _UNUSED
 int nflua_data_send(struct nflua_data *dch, const char *name,
 		const char *payload, size_t len)
 {

@@ -37,6 +37,7 @@ enum lunatik_attrs {
 	CODE,
 	FLAGS,
 	SCRIPT_SIZE,
+	SCRIPT_NAME,
 	OP_SUCESS,
 	OP_ERROR,
 	ATTRS_COUNT

@@ -66,52 +66,27 @@ static void newclass(lua_State *L, const char *name,
 	lua_pop(L, 1);
 }
 
-static uint32_t generatepid(lua_State *L, int arg)
-{
-	const uint32_t mask = 1 << 31;
-
-	switch (lua_type(L, 1)) {
-	case LUA_TNUMBER: {
-		uint32_t pid = lua_tointeger(L, arg);
-		if (pid & mask)
-			luaL_argerror(L, arg, "must be in range [0, 2^31)");
-		return pid;
-	}
-	case LUA_TNIL:
-	case LUA_TNONE: {
-		return NL_AUTO_PORT;
-	}
-	default:
-		luaL_argerror(L, arg, "must be integer or nil");
-	}
-
-	return 0;
-}
-
 static int lsession_open(lua_State *L)
 {
 	int ret;
-	uint32_t pid = generatepid(L, 1);
 	struct lunatik_session *session = lua_newuserdata(L, sizeof(struct lunatik_session));
 
-	luaL_setmetatable(L, "lunatik.control");
-	ret = lunatikS_init(session, pid);
+	luaL_setmetatable(L, "lunatik.session");
+	ret = lunatikS_init(session);
 
 	return ret < 0 ? pusherrno(L, ret) : 1;
 }
 
-#ifndef _UNUSED
-static int lcontrol_gc(lua_State *L)
+static int lsession_gc(lua_State *L)
 {
-	struct control *c = luaL_checkudata(L, 1, "nflua.control");
-	if (nflua_control_is_open(&c->ctrl)) nflua_control_close(&c->ctrl);
+	struct lunatik_session *session = luaL_checkudata(L, 1, "lunatik.session");
+	if (lunatikS_isopen(session)) lunatikS_end(session);
 	return 0;
 }
-#endif /*_UNUSED*/
 
 static struct lunatik_session *getsession(lua_State *L)
 {
-	struct lunatik_session *c = luaL_checkudata(L, 1, "lunatik.control");
+	struct lunatik_session *c = luaL_checkudata(L, 1, "lunatik.session");
 	if (!lunatikS_isopen(c))
 		luaL_argerror(L, 1, "socket closed");
 	return c;
@@ -125,50 +100,20 @@ static struct lunatik_state *getnlstate(lua_State *L)
 	return s;
 }
 
-#ifndef _UNUSED
-static int lcontrol_close(lua_State *L)
+static int lsession_end(lua_State *L)
 {
-	struct control *c = getsession(L);
-	nflua_control_close(&c->ctrl);
+	struct lunatik_session *session = getsession(L);
+	lunatikS_end(session);
 	lua_pushboolean(L, true);
 	return 1;
 }
 
-static int lcontrol_getfd(lua_State *L)
+static int lsession_getfd(lua_State *L)
 {
-	struct control *c = getcontrol(L);
-	lua_pushinteger(L, nflua_control_getsock(&c->ctrl));
+	struct lunatik_session *session = getsession(L);
+	lua_pushinteger(L, lunatikS_getfd(session));
 	return 1;
 }
-
-static int lcontrol_getpid(lua_State *L)
-{
-	struct control *c = getcontrol(L);
-	lua_pushinteger(L, nflua_control_getpid(&c->ctrl));
-	return 1;
-}
-
-static int lcontrol_getstate(lua_State *L)
-{
-	static const char *tostr[] = {
-		[NFLUA_LINK_READY] = "ready",
-		[NFLUA_SENDING_REQUEST] = "sending",
-		[NFLUA_PENDING_REPLY] = "waiting",
-		[NFLUA_RECEIVING_REPLY] = "receiving",
-		[NFLUA_PROTOCOL_OUTOFSYNC] = "failed",
-		[NFLUA_SOCKET_CLOSED] = "closed"
-	};
-	struct control *c = getcontrol(L);
-	int state = nflua_control_getstate(&c->ctrl);
-
-	if (state < NFLUA_LINK_READY || state > NFLUA_SOCKET_CLOSED)
-		return pusherrmsg(L, "unknown state");
-
-	lua_pushstring(L, tostr[state]);
-
-	return 1;
-}
-#endif /* _UNUSED */
 
 static int lsession_create(lua_State *L)
 {
@@ -195,11 +140,10 @@ static int lsession_create(lua_State *L)
 	return 1;
 }
 
-static int lsession_destroy(lua_State *L)
+static int lstate_close(lua_State *L)
 {
-	struct lunatik_session *session = getsession(L);
-	const char *name = luaL_checkstring(L, 2);
-	if (lunatikS_destroy(session, name)){
+	struct lunatik_state *s = getnlstate(L);
+	if (lunatikS_destroy(s->session, s->name)){
 		lua_pushboolean(L, false);
 		return 1;
 	}
@@ -215,30 +159,34 @@ static int lstate_execute(lua_State *L)
 	const char *name = s->name;
 	size_t len;
 	const char *payload = luaL_checklstring(L, 2, &len);
-	int status = lunatikS_execute(session, name, payload, len);
+	const char *script_name = luaL_optstring(L, 3, "Lunatik");
 
-	if (status){
-		lua_pushboolean(L, false);
-		return 1;
+	if (strlen(script_name) > LUNATIK_NAME_MAXSIZE) {
+		printf("script name too long\n");
+		goto error;
 	}
+	int status = lunatikS_execute(session, name, payload, script_name, len);
 
+	if (status)
+		goto error;
+
+	lua_pushnil(L);
+	return 1;
+
+error:
 	lua_pushboolean(L, true);
 	return 1;
 }
 
 static int lstate_getname(lua_State *L) {
 	struct lunatik_state *s = getnlstate(L);
-
 	lua_pushstring(L, s->name);
-
 	return 1;
 }
 
 static int lstate_getmaxalloc(lua_State *L) {
 	struct lunatik_state *s = getnlstate(L);
-
 	lua_pushinteger(L, s->maxalloc);
-
 	return 1;
 }
 
@@ -364,28 +312,20 @@ static int ldata_receive(lua_State *L)
 }
 #endif /* _UNUSED */
 
-static const luaL_Reg control_mt[] = {
-	#ifndef _UNUSED
-	{"close", lcontrol_close},
-	{"getfd", lcontrol_getfd},
-	{"getpid", lcontrol_getpid},
-	#endif /*_UNUSED*/
-
-	{"create", lsession_create},
-	{"destroy", lsession_destroy},
+static const luaL_Reg session_mt[] = {
+	{"down", lsession_end},
+	{"getfd", lsession_getfd},
+	{"new", lsession_create},
 	{"list", lsession_list},
-
-	#ifndef _UNUSED
-	{"receive", lcontrol_receive},
-	{"__gc", lcontrol_gc},
-	#endif /*_UNUSED*/
+	{"__gc", lsession_gc},
 	{NULL, NULL}
 };
 
 static const luaL_Reg state_mt[] = {
-	{"execute", lstate_execute},
+	{"dostring", lstate_execute},
 	{"getname", lstate_getname},
 	{"getmaxalloc", lstate_getmaxalloc},
+	{"close", lstate_close},
 	{NULL, NULL}
 };
 
@@ -424,7 +364,7 @@ int luaopen_lunatik(lua_State *L)
 	lua_pop(L, 1);
 	#endif /*_UNUSED*/
 
-	newclass(L, "lunatik.control", control_mt);
+	newclass(L, "lunatik.session", session_mt);
 	newclass(L, "states.control", state_mt);
 	#ifndef _UNUSED
 	newclass(L, "nflua.data", data_mt);

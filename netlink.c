@@ -42,6 +42,7 @@ static int lunatikN_list(struct sk_buff *buff, struct genl_info *info);
 struct nla_policy lunatik_policy[ATTRS_COUNT] = {
 	[STATE_NAME]  = { .type = NLA_STRING },
 	[CODE]		  = { .type = NLA_STRING },
+	[SCRIPT_NAME] = { .type = NLA_STRING},
 	[MAX_ALLOC]   = { .type = NLA_U32 },
 	[SCRIPT_SIZE] = { .type = NLA_U32 },
 	[STATES_COUNT]= { .type = NLA_U32},	
@@ -272,6 +273,7 @@ static int lunatikN_exec(struct sk_buff *buff, struct genl_info *info)
 	struct lunatik_state *s;
 	struct lunatik_instance *instance;
 	const char *finalscript;
+	const char *script_name;
 	int err;
 	char *fragment;
 	char *state_name;
@@ -313,6 +315,7 @@ static int lunatikN_exec(struct sk_buff *buff, struct genl_info *info)
 		luaL_pushresult(s->buffer);
 
 		finalscript = lua_tostring(s->L, -1);
+		script_name = nla_data(info->attrs[SCRIPT_NAME]);
 		
 		if (!lunatik_stateget(s)) {
 			pr_err("Failed to get state\n");
@@ -320,7 +323,7 @@ static int lunatikN_exec(struct sk_buff *buff, struct genl_info *info)
 			return 0;
 		}
 
-		if ((err = luaU_dostring(s->L, finalscript, s->scriptsize, "Lua in kernel"))) {
+		if ((err = luaU_dostring(s->L, finalscript, s->scriptsize, script_name))) {
 			pr_err("%s\n", lua_tostring(s->L, -1));
 		}
 		

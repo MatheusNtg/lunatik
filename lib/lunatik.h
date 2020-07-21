@@ -56,6 +56,7 @@ struct lunatik_session {
     enum session_status status;
     enum callback_result cb_result;
     int family;
+    int fd;
     uint32_t pid;
 };
 
@@ -67,40 +68,28 @@ struct nflua_data {
     char state[NFLUA_NAME_MAXSIZE];
     char buffer[NFLUA_PAYLOAD_MAXSIZE];
 };
-
-static inline int nflua_control_getsock(const struct nflua_control *ctrl)
-{
-    return ctrl->fd;
-}
-
-static inline int nflua_control_getstate(const struct nflua_control *ctrl)
-{
-    return ctrl->state;
-}
-
-static inline int nflua_control_getpid(const struct nflua_control *ctrl)
-{
-    return ctrl->pid;
-}
 #endif /* _UNUSED */
+
+static inline int lunatikS_getfd(const struct lunatik_session *session)
+{
+    return session->fd;
+}
 
 static inline int lunatikS_isopen(const struct lunatik_session *session)
 {
-    return nl_socket_get_fd(session->sock) != -1;
+    return session->fd >= 0;
 }
 
-int lunatikS_init(struct lunatik_session *session, uint32_t pid);
+int lunatikS_init(struct lunatik_session *session);
 
-#ifndef _UNUSED
-void nflua_control_close(struct nflua_control *ctrl);
-#endif /*_UNUSED*/
+void lunatikS_end(struct lunatik_session *session);
 
 int lunatikS_create(struct lunatik_session *session, struct lunatik_state *s);
 
 int lunatikS_destroy(struct lunatik_session *session, const char *name);
 
 int lunatikS_execute(struct lunatik_session *session, const char *state_name,
-    const char *script, size_t total_code_size);
+    const char *script, const char *script_name, size_t total_code_size);
 
 int lunatikS_list(struct lunatik_session *session);
 
