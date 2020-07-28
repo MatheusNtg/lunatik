@@ -121,10 +121,12 @@ static inline int nflua_data_is_open(const struct nflua_data *dch)
 int nflua_data_init(struct nflua_data *dch, uint32_t pid);
 
 void nflua_data_close(struct nflua_data *dch);
+#endif
 
-int nflua_data_send(struct nflua_data *dch, const char *name,
+int lunatikS_datasend(struct lunatik_session *session, const char *name,
         const char *payload, size_t len);
 
+#ifndef _UNUSED
 int nflua_data_receive(struct nflua_data *dch, char *state, char *buffer);
 #endif /* _UNUSED */
 #endif /* LUNATIK_H */

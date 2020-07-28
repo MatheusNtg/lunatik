@@ -355,6 +355,7 @@ static int response_handler(struct nl_msg *msg, void *arg)
 	{
 	case CREATE_STATE:
 	case DESTROY_STATE:
+	case DATA:
 	case EXECUTE_CODE:
 		if (attrs_tb[OP_SUCESS] && nla_get_u8(attrs_tb[OP_SUCESS])) {
 			session->cb_result = CB_SUCCESS;
@@ -432,4 +433,35 @@ void lunatikS_close(struct lunatik_session *session)
 		nl_socket_free(session->sock);
 		session->fd = -1;
 	}
+}
+
+int lunatikS_datasend(struct lunatik_session *session, const char *name,
+											const char *payload, size_t len)
+{
+  struct nl_msg *msg = prepare_message(session, DATA, 0);
+
+  if (msg == NULL)
+  	return -1;
+
+	NLA_PUT_STRING(msg, LUNATIK_DATA, payload);
+	NLA_PUT_STRING(msg, STATE_NAME, name);
+	NLA_PUT_U32(msg, DATA_LENGTH, len);
+
+	if ((nl_send_auto(session->sock, msg)) < 0) {
+		printf("Failed to send the message to kernel\n");
+		return -1;
+	}
+
+	nl_recvmsgs_default(session->sock);
+	nl_wait_for_ack(session->sock);
+
+	if (session->cb_result == CB_ERROR)
+		return -1;
+
+	return 0;
+
+nla_put_failure:
+	printf("Failed to put attributes on DATA message\n");
+	nlmsg_free(msg);
+	return -1;
 }

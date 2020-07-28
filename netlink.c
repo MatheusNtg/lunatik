@@ -30,6 +30,9 @@
 #include "luautil.h"
 #include "states.h"
 #include "netlink_common.h"
+#include <lmemlib.h>
+
+#define DATA_RECV_FUNC "memory_callback"
 
 struct lunatik_nl_state {
 	char name[LUNATIK_NAME_MAXSIZE];
@@ -43,14 +46,17 @@ static int lunatikN_newstate(struct sk_buff *buff, struct genl_info *info);
 static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info);
 static int lunatikN_close(struct sk_buff *buff, struct genl_info *info);
 static int lunatikN_list(struct sk_buff *buff, struct genl_info *info);
+static int lunatikN_handledata(struct sk_buff *buff, struct genl_info *info);
 
 struct nla_policy lunatik_policy[ATTRS_COUNT] = {
 	[STATE_NAME]  = { .type = NLA_STRING },
 	[CODE]		    = { .type = NLA_STRING },
 	[SCRIPT_NAME] = { .type = NLA_STRING },
 	[STATES_LIST] = { .type = NLA_STRING },
+	[LUNATIK_DATA]= { .type = NLA_STRING},
 	[SCRIPT_SIZE] = { .type = NLA_U32 },
 	[MAX_ALLOC]	 = { .type = NLA_U32 },
+	[DATA_LENGTH] = { .type = NLA_U32 },
 	[FLAGS] 	    = { .type = NLA_U8 },
 	[OP_SUCESS]   = { .type = NLA_U8 },
 	[OP_ERROR]	  = { .type = NLA_U8 },
@@ -84,6 +90,14 @@ static const struct genl_ops l_ops[] = {
 	{
 		.cmd    = LIST_STATES,
 		.doit   = lunatikN_list,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		/*Before kernel 5.2.0, each operation has its own policy*/
+		.policy = lunatik_policy
+#endif
+	},
+	{
+		.cmd    = DATA,
+		.doit   = lunatikN_handledata,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
 		/*Before kernel 5.2.0, each operation has its own policy*/
 		.policy = lunatik_policy
@@ -228,6 +242,11 @@ static void add_fragtostate(char *fragment, lunatik_State *s)
 	s->buffer_offset++;
 }
 
+static inline void finalize_buffer(char *fragment, lunatik_State *s)
+{
+	strcpy(s->code_buffer + (s->buffer_offset * LUNATIK_FRAGMENT_SIZE), fragment);
+}
+
 static int dostring(char *code, lunatik_State *s, const char *script_name)
 {
 	int err = 0;
@@ -283,7 +302,7 @@ static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 	}
 
 	if (flags & LUNATIK_DONE){
-		add_fragtostate(fragment, s);
+		finalize_buffer(fragment, s);
 		script_name = nla_data(info->attrs[SCRIPT_NAME]);
 		err = dostring(s->code_buffer, s, script_name);
 		err ? reply_with(OP_ERROR, EXECUTE_CODE, info) : reply_with(OP_SUCESS, EXECUTE_CODE, info);
@@ -429,5 +448,111 @@ reset_reply_buffer:
 	reply_buffer->status = RB_INIT;
 	reply_buffer->curr_pos_to_send = 0;
 	kfree(fragment);
+	return 0;
+}
+
+static int handle_data(lua_State *L);
+
+static int lunatikN_handledata(struct sk_buff *buff, struct genl_info *info)
+{
+	struct lunatik_data data;
+	struct lunatik_instance *instance;
+	lunatik_State *state;
+	char *state_name;
+	char *payload;
+	u32 payload_len;
+
+	pr_debug("Received a DATA command\n");
+
+	instance = lunatik_pernet(genl_info_net(info));
+	state_name = nla_data(info->attrs[STATE_NAME]);
+
+	if ((state = lunatik_netstatelookup(instance, state_name)) == NULL) {
+		pr_err("Failed to find state %s\n", state_name);
+		goto error;
+	}
+
+	payload = nla_data(info->attrs[LUNATIK_DATA]);
+	payload_len = *((u32 *) nla_data(info->attrs[DATA_LENGTH]));
+
+	if ((data.buffer = kzalloc(sizeof(payload_len), GFP_KERNEL))  == NULL) {
+		pr_err("Failed to allocate memory to data buffer\n");
+		goto error;
+	}
+
+	memcpy(data.buffer, payload, payload_len);
+	data.size = payload_len;
+
+	if (!lunatik_stateget(state)) {
+		pr_err("Failed getting state\n");
+		goto error;
+	}
+
+	spin_lock_bh(&state->lock);
+
+	lua_pushcfunction(state->L, handle_data);
+	lua_pushlightuserdata(state->L, &data);
+	if (luaU_pcall(state->L, 1, 0)) {
+		pr_err("%s\n", lua_tostring(state->L, -1));
+		spin_unlock_bh(&state->lock);
+		goto error;
+	}
+
+	spin_unlock_bh(&state->lock);
+
+	lunatik_stateput(state);
+	kfree(data.buffer);
+	reply_with(OP_SUCESS, DATA, info);
+
+	return 0;
+
+error:
+	lunatik_stateput(state);
+	kfree(data.buffer);
+	reply_with(OP_ERROR, DATA, info);
+	return 0;
+}
+
+
+/* NOTE: Most of the function below was copied from NFLua: https://github.com/cujoai/nflua
+ * Copyright (C) 2017-2019  CUJO LLC
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+static int handle_data(lua_State *L)
+{
+	int error;
+	struct lunatik_data *data = lua_touserdata(L, 1);
+
+	lua_pop(L, 1);
+
+	luamem_newref(L);
+	luamem_setref(L, -1, data->buffer, data->size, NULL);
+
+	if (lua_getglobal(L, DATA_RECV_FUNC) != LUA_TFUNCTION)
+		return luaL_error(L, "couldn't find receive function: %s\n",
+				DATA_RECV_FUNC);
+
+	lua_pushvalue(L, 1); /* memory */
+
+	error = lua_pcall(L, 1, 0, 0);
+
+	luamem_setref(L, 1, NULL, 0, NULL);
+
+	if (error)
+		lua_error(L);
+
 	return 0;
 }
