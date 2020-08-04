@@ -17,7 +17,10 @@
  */
 
 #ifndef NETLINK_H
+#define NETLINK_H
 #include <net/genetlink.h>
+
+#include "states.h"
 
 extern struct genl_family lunatik_family;
 
@@ -37,5 +40,9 @@ struct lunatik_data {
     char *buffer;
     size_t size;
 };
+
+// typedef struct lunatik_state lunatik_State;
+
+// int lunatikN_send_data(lunatik_State *s, const char *payload, size_t size);
 
 #endif
