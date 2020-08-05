@@ -213,6 +213,7 @@ static void send_states_list(char *buffer, int flags, struct genl_info *info)
 
 static int lunatikN_newstate(struct sk_buff *buff, struct genl_info *info)
 {
+	struct net *namespace;
 	struct lunatik_instance *instance;
 	struct lunatik_state *s;
 	char *state_name;
@@ -220,11 +221,12 @@ static int lunatikN_newstate(struct sk_buff *buff, struct genl_info *info)
 
 	pr_debug("Received a CREATE_STATE message\n");
 
-	instance = lunatik_pernet(genl_info_net(info));
+	namespace = genl_info_net(info);
+	instance  = lunatik_pernet(namespace);
 	state_name = (char *)nla_data(info->attrs[STATE_NAME]);
 	max_alloc = (u32 *)nla_data(info->attrs[MAX_ALLOC]);
 
-	s = lunatik_netnewstate(instance, *max_alloc, state_name);
+	s = lunatik_netnewstate(namespace, *max_alloc, state_name);
 
 	if (s == NULL) {
 		reply_with(OP_ERROR, CREATE_STATE, info);
@@ -284,7 +286,7 @@ out:
 static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 {
 	struct lunatik_state *s;
-	struct lunatik_instance *instance;
+	struct net *namespace;
 	const char *script_name;
 	char *fragment;
 	char *state_name;
@@ -293,12 +295,12 @@ static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 
 	pr_debug("Received a EXECUTE_CODE message\n");
 
-	instance = lunatik_pernet(genl_info_net(info));
+	namespace = genl_info_net(info);
 	state_name = (char *)nla_data(info->attrs[STATE_NAME]);
 	fragment = (char *)nla_data(info->attrs[CODE]);
 	flags = *((u8*)nla_data(info->attrs[FLAGS]));
 
-	if ((s = lunatik_netstatelookup(instance, state_name)) == NULL) {
+	if ((s = lunatik_netstatelookup(namespace, state_name)) == NULL) {
 		pr_err("Error finding klua state\n");
 		reply_with(OP_ERROR, EXECUTE_CODE, info);
 		return 0;
@@ -324,15 +326,15 @@ static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 
 static int lunatikN_close(struct sk_buff *buff, struct genl_info *info)
 {
-	struct lunatik_instance *instance;
+	struct net *namespace;
 	char *state_name;
 
-	instance = lunatik_pernet(genl_info_net(info));
+	namespace = genl_info_net(info);
 	state_name = (char *)nla_data(info->attrs[STATE_NAME]);
 
 	pr_debug("Received a DESTROY_STATE command\n");
 
-	if (lunatik_netclose(instance, state_name))
+	if (lunatik_netclose(namespace, state_name))
 		reply_with(OP_ERROR, DESTROY_STATE, info);
 	else
 		reply_with(OP_SUCESS, DESTROY_STATE, info);
@@ -477,7 +479,7 @@ static int handle_data(lua_State *L);
 
 static int lunatikN_data(struct sk_buff *buff, struct genl_info *info)
 {
-	struct lunatik_instance *instance;
+	struct net *namespace;
 	struct lunatik_data data;
 	lunatik_State *state;
 	char *payload;
@@ -486,10 +488,10 @@ static int lunatikN_data(struct sk_buff *buff, struct genl_info *info)
 	int err = 0;
 	int base;
 
-	instance = lunatik_pernet(genl_info_net(info));
+	namespace = genl_info_net(info);
 	state_name = nla_data(info->attrs[STATE_NAME]);
 
-	if ((state = lunatik_netstatelookup(instance, state_name)) == NULL) {
+	if ((state = lunatik_netstatelookup(namespace, state_name)) == NULL) {
 		pr_err("State %s not found\n", state_name);
 		goto error;
 	}

@@ -55,8 +55,8 @@ lunatik_State *lunatik_statelookup(const char *name);
 bool lunatik_stateget(lunatik_State *s);
 void lunatik_stateput(lunatik_State *s);
 
-lunatik_State *lunatik_netnewstate(struct lunatik_instance *instance, size_t maxalloc, const char *name);
-int lunatik_netclose(struct lunatik_instance *instance, const char *name);
-lunatik_State *lunatik_netstatelookup(struct lunatik_instance *instance, const char *name);
+lunatik_State *lunatik_netnewstate(struct net *namespace, size_t maxalloc, const char *name);
+int lunatik_netclose(struct net *namespace, const char *name);
+lunatik_State *lunatik_netstatelookup(struct net *namespace, const char *name);
 
 #endif /* LUNATIK_STATES_H */

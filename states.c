@@ -34,6 +34,7 @@
 #define LUNATIK_SETPAUSE	100
 #endif /* LUNATIK_SETPAUSE */
 
+extern struct lunatik_instance *lunatik_pernet(struct net*);
 extern int luaopen_memory(lua_State *);
 extern int luaopen_netlink(lua_State *L);
 
@@ -237,15 +238,15 @@ void lunatik_statesinit(void)
 	hash_init(instance.states_table);
 }
 
-lunatik_State *lunatik_netstatelookup(struct lunatik_instance *instance, const char *name)
+lunatik_State *lunatik_netstatelookup(struct net *namespace, const char *name)
 {
-
+	struct lunatik_instance *instance = lunatik_pernet(namespace);
 	lunatik_State *state;
 	int key;
 	if (instance == NULL)
 		return NULL;
 
-	key = name_hash(instance,name);
+	key = name_hash(instance, name);
 
 	hash_for_each_possible_rcu(instance->states_table, state, node, key) {
 		if (!strncmp(state->name, name, LUNATIK_NAME_MAXSIZE))
@@ -254,10 +255,10 @@ lunatik_State *lunatik_netstatelookup(struct lunatik_instance *instance, const c
 	return NULL;
 }
 
-lunatik_State *lunatik_netnewstate(struct lunatik_instance *instance, size_t maxalloc, const char *name)
+lunatik_State *lunatik_netnewstate(struct net *namespace, size_t maxalloc, const char *name)
 {
-
-	lunatik_State *s = lunatik_netstatelookup(instance, name);
+	struct lunatik_instance *instance = lunatik_pernet(namespace);
+	lunatik_State *s = lunatik_netstatelookup(namespace, name);
 	int namelen = strnlen(name, LUNATIK_NAME_MAXSIZE);
 
 	pr_debug("creating state: %.*s maxalloc: %zd\n", namelen, name,
@@ -306,9 +307,10 @@ lunatik_State *lunatik_netnewstate(struct lunatik_instance *instance, size_t max
 	return s;
 }
 
-int lunatik_netclose(struct lunatik_instance *instance, const char *name)
+int lunatik_netclose(struct net *namespace, const char *name)
 {
-	lunatik_State *s = lunatik_netstatelookup(instance,name);
+	struct lunatik_instance *instance = lunatik_pernet(namespace);
+	lunatik_State *s = lunatik_netstatelookup(namespace, name);
 
 	if (s == NULL || refcount_read(&s->users) > 1)
 		return -1;
