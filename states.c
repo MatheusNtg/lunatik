@@ -28,7 +28,7 @@
 #include "lua/lualib.h"
 
 #include "luautil.h"
-#include "states.h"
+#include "lunatik.h"
 
 #ifndef LUNATIK_SETPAUSE
 #define LUNATIK_SETPAUSE	100

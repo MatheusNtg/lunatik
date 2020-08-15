@@ -31,7 +31,7 @@
 #include "lua/lauxlib.h"
 #include "lua/lualib.h"
 
-#include "states.h"
+#include "lunatik.h"
 #include "netlink_common.h"
 
 EXPORT_SYMBOL(lua_checkstack);

@@ -30,7 +30,7 @@
 #include <lmemlib.h>
 
 #include "luautil.h"
-#include "states.h"
+#include "lunatik.h"
 #include "netlink_common.h"
 
 #define DATA_RECV_FUNC "receive_callback"
