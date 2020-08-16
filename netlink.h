@@ -41,4 +41,4 @@ struct lunatik_data {
     size_t size;
 };
 
-#endif
+#endif /* NETLINK_H */
