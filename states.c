@@ -230,7 +230,7 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 
 	spin_lock_bh(&(instance->statestable_lock));
 	hash_add_rcu(instance->states_table, &(s->node), name_hash(instance,name));
-	refcount_inc(&(s->users));
+	refcount_set(&(s->users), 1);
 	atomic_inc(&(instance->states_count));
 	spin_unlock_bh(&(instance->statestable_lock));
 
