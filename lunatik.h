@@ -64,4 +64,6 @@ lunatik_State *lunatik_netstatelookup(const char *name, struct net *net);
 
 lunatik_State *lunatik_getenv(lua_State *L);
 
+int lunatik_init(void);
+
 #endif /* LUNATIK_STATES_H */

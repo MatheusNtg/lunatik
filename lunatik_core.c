@@ -184,6 +184,8 @@ EXPORT_SYMBOL(lunatik_netstatelookup);
 
 EXPORT_SYMBOL(lunatik_getenv);
 
+EXPORT_SYMBOL(lunatik_init);
+
 extern struct genl_family lunatik_family;
 extern void lunatik_statesinit(void);
 extern void lunatik_closeall_from_default_ns(void);
@@ -258,7 +260,24 @@ static void __exit modexit(void)
 	genl_unregister_family(&lunatik_family);
 }
 
-module_init(modinit);
-module_exit(modexit);
+int lunatik_init(void)
+{
+	int err;
+
+	if ((err = register_pernet_subsys(&lunatik_net_ops))) {
+		pr_err("Failed to register pernet operations\n");
+		return err;
+	}
+
+	if ((err = genl_register_family(&lunatik_family))) {
+		pr_err("Failed to register generic netlink family\n");
+		return err;
+	}
+
+	return 0;
+}
+
+// module_init(modinit);
+// module_exit(modexit);
 MODULE_LICENSE("Dual MIT/GPL");
 #endif /* __linux__ */
