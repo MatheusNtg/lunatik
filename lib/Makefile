@@ -41,7 +41,7 @@ lua_memory: lua_memory_clean
 -include $(DEPS)
 
 .PHONY: clean
-clean: lua_clean
+clean: lua_memory_clean
 	$(RM) $(LIBS) $(OBJS) $(DEPS)
 
 lua_memory_clean:
