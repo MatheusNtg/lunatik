@@ -57,15 +57,15 @@ inline lunatik_State *lunatik_statelookup(const char *name)
 
 void state_destroy(lunatik_State *s)
 {
-	hash_del_rcu(&s->node);
-	atomic_dec(&(s->instance.states_count));
-
-	spin_lock_bh(&s->lock);
+	spin_lock(&s->lock);
 	if (s->L != NULL) {
 		lua_close(s->L);
 		s->L = NULL;
 	}
-	spin_unlock_bh(&s->lock);
+	spin_unlock(&s->lock);
+	
+	hash_del_rcu(&s->node);
+	atomic_dec(&(s->instance.states_count));
 
 	lunatik_putstate(s);
 }
@@ -135,7 +135,7 @@ void lunatik_closeall_from_default_ns(void)
 	instance = lunatik_pernet(LUNATIK_DEFAULT_NS);
 
 	spin_lock_bh(&(instance->statestable_lock));
-	hash_for_each_safe (instance->states_table, bkt, tmp, s, node) {
+	hash_for_each_safe(instance->states_table, bkt, tmp, s, node) {
 		state_destroy(s);
 	}
 	spin_unlock_bh(&(instance->statestable_lock));
@@ -148,20 +148,29 @@ inline bool lunatik_getstate(lunatik_State *s)
 
 void lunatik_putstate(lunatik_State *s)
 {
+	char state_name_bak[LUNATIK_NAME_MAXSIZE];
 	refcount_t *users = &s->users;
 	spinlock_t *refcnt_lock = &(s->instance.rfcnt_lock);
 
-	if (WARN_ON(s == NULL))
+	if (WARN_ON(s == NULL)) {
+		pr_err("State is equal NULL, failed to put it\n");
 		return;
+	}
 
-	if (refcount_dec_not_one(users))
+	if (refcount_dec_not_one(users)) {
+		pr_info("Succesfully put state, there is %d references to it yet\n", refcount_read(users));
 		return;
+	}
 
 	spin_lock_bh(refcnt_lock);
-	if (!refcount_dec_and_test(users))
+	strncpy(state_name_bak, s->name, LUNATIK_NAME_MAXSIZE);
+	if (!refcount_dec_and_test(users)) {
+		pr_err("Failed to put state, something is referencing to state!\n");
 		goto out;
+	}
 
 	kfree(s);
+	pr_info("Succesfully destroyed the state %s\n", state_name_bak);
 out:
 	spin_unlock_bh(refcnt_lock);
 }

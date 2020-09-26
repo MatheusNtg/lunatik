@@ -181,11 +181,11 @@ static void reply_with(int reply, int command, struct genl_info *info)
 	genlmsg_end(obuff, msg_head);
 
 	if (genlmsg_reply(obuff, info) < 0) {
-		pr_err("Failed to send message to user space\n");
+		pr_err("Failed to send message to user space on function %s\n", __func__);
 		return;
 	}
 
-	pr_debug("Message sent to user space\n");
+	pr_debug("On function %s message sent to user space\n", __func__);
 }
 
 static void send_states_list(char *buffer, int flags, struct genl_info *info)
@@ -216,11 +216,11 @@ static void send_states_list(char *buffer, int flags, struct genl_info *info)
 	genlmsg_end(obuff, msg_head);
 
 	if (genlmsg_reply(obuff, info) < 0) {
-		pr_err("Failed to send message to user space\n");
+		pr_err("Failed to send message to user space on function %s\n", __func__);
 		return;
 	}
 
-	pr_debug("Message sent to user space\n");
+	pr_debug("On function %s message sent to user space\n", __func__);
 }
 
 static int lunatikN_newstate(struct sk_buff *buff, struct genl_info *info)
@@ -383,11 +383,11 @@ static void send_init_information(int parts, int states_count, struct genl_info 
 	genlmsg_end(obuff, msg_head);
 
 	if (genlmsg_reply(obuff, info) < 0) {
-		pr_err("Failed to send message to user space\n");
+		pr_err("Failed to send message to user space on function %s\n", __func__);
 		return;
 	}
 
-	pr_debug("Message sent to user space\n");
+	pr_debug("On function %s message sent to user space\n", __func__);
 }
 
 static int init_replybuffer(struct lunatik_instance *instance, size_t size)
@@ -568,31 +568,32 @@ int lunatikN_send_data(lunatik_State *state, const char *payload, size_t size)
 {
 	struct sk_buff *obuff;
 	void *msg_head;
+	int err = -1;
 
 	if ((obuff = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL)) == NULL) {
 		pr_err("Failed allocating message to an reply\n");
-		return 0;
+		return err;
 	}
 
 	if ((msg_head = genlmsg_put_reply(obuff, &state->usr_state_info, &lunatik_family, 0, DATA)) == NULL) {
 		pr_err("Failed to put generic netlink header\n");
-		return 0;
+		return err;
 	}
 
 	if (nla_put_string(obuff, LUNATIK_DATA, payload) ||
 		nla_put_u32(obuff, LUNATIK_DATA_LEN, size)) {
 		pr_err("Failed to put attributes on socket buffer\n");
-		return 0;
+		return err;
 	}
 
 	genlmsg_end(obuff, msg_head);
 
 	if (genlmsg_reply(obuff, &state->usr_state_info) < 0) {
-		pr_err("Failed to send message to user space\n");
-		return 0;
+		pr_err("Failed to send message to user space on function %s\n", __func__);
+		return err;
 	}
 
-	pr_debug("Message sent to user space\n");
+	pr_debug("From %s function message sent to user space\n", __func__);
 	return 0;
 }
 
@@ -621,11 +622,11 @@ static int sendstate_msg(lunatik_State *state, struct genl_info *info)
 	genlmsg_end(obuff, msg_head);
 
 	if (genlmsg_reply(obuff, info) < 0) {
-		pr_err("Failed to send message to user space\n");
+		pr_err("Failed to send message to user space on function %s\n", __func__);
 		return -1;
 	}
 
-	pr_debug("Message sent to user space\n");
+	pr_debug("Message sent to user space %s\n", __func__);
 	return 0;
 }
 
@@ -649,7 +650,7 @@ static int lunatikN_sendstate(struct sk_buff *buff, struct genl_info *info)
 	}
 
 	if (sendstate_msg(state, info)) {
-		pr_err("Failed to send message to user space\n");
+		pr_err("Failed to send message to user space %s\n", __func__);
 		reply_with(OP_ERROR, GET_STATE, info);
 	}
 
@@ -682,11 +683,11 @@ static int send_curralloc(int curralloc, struct genl_info *info)
 	genlmsg_end(obuff, msg_head);
 
 	if (genlmsg_reply(obuff, info) < 0) {
-		pr_err("Failed to send message to user space\n");
+		pr_err("Failed to send message to user space %s\n", __func__);
 		return -1;
 	}
 
-	pr_debug("Message sent to user space\n");
+	pr_debug("From %s function, message sent to user space\n", __func__);
 	return 0;
 }
 

@@ -218,13 +218,13 @@ static void __net_exit lunatik_instanceclose(struct net *net)
 
 	instance = lunatik_pernet(net);
 
-	spin_lock_bh(&(instance->statestable_lock));
+	spin_lock(&(instance->statestable_lock));
 
-	hash_for_each_safe(instance->states_table, bkt, tmp, s, node) {
+	hash_for_each(instance->states_table, bkt, s, node) {
 		state_destroy(s);
 	}
 
-	spin_unlock_bh(&(instance->statestable_lock));
+	spin_unlock(&(instance->statestable_lock));
 }
 
 static struct pernet_operations lunatik_net_ops = {
@@ -253,7 +253,6 @@ static int __init modinit(void)
 
 static void __exit modexit(void)
 {
-	lunatik_closeall_from_default_ns();
 	unregister_pernet_subsys(&lunatik_net_ops);
 	genl_unregister_family(&lunatik_family);
 }
