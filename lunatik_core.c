@@ -218,13 +218,13 @@ static void __net_exit lunatik_instanceclose(struct net *net)
 
 	instance = lunatik_pernet(net);
 
-	spin_lock(&(instance->statestable_lock));
+	spin_lock_bh(&(instance->statestable_lock));
 
 	hash_for_each(instance->states_table, bkt, s, node) {
 		state_destroy(s);
 	}
 
-	spin_unlock(&(instance->statestable_lock));
+	spin_unlock_bh(&(instance->statestable_lock));
 }
 
 static struct pernet_operations lunatik_net_ops = {

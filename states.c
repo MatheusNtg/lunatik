@@ -57,12 +57,12 @@ inline lunatik_State *lunatik_statelookup(const char *name)
 
 void state_destroy(lunatik_State *s)
 {
-	spin_lock(&s->lock);
+	spin_lock_bh(&s->lock);
 	if (s->L != NULL) {
 		lua_close(s->L);
 		s->L = NULL;
 	}
-	spin_unlock(&s->lock);
+	spin_unlock_bh(&s->lock);
 	
 	hash_del_rcu(&s->node);
 	atomic_dec(&(s->instance.states_count));
