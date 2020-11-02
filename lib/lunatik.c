@@ -223,29 +223,31 @@ nla_put_failure:
 int lunatik_closestate(struct lunatik_nl_state *state)
 {
 	struct nl_msg *msg;
-	int ret = -1;
+	int err = -1;
 
 	if ((msg = prepare_message(DESTROY_STATE, 0)) == NULL)
-		return ret;
+		return err;
 
 	NLA_PUT_STRING(msg, STATE_NAME, state->name);
 
-	if ((ret = nl_send_auto(state->control_sock, msg)) < 0) {
-		printf("Failed to send destroy message:\n\t%s\n", nl_geterror(ret));
-		return ret;
+	if ((err = nl_send_auto(state->control_sock, msg)) < 0) {
+		printf("Failed to send destroy message:\n\t%s\n", nl_geterror(err));
+		return err;
 	}
 
-	ret = receive_state_op_result(state);
+	err = receive_state_op_result(state);
 
-	nl_socket_free(state->send_datasock);
-	nl_socket_free(state->recv_datasock);
-	nl_socket_free(state->control_sock);
+	if (!err) {
+		nl_socket_free(state->send_datasock);
+		nl_socket_free(state->recv_datasock);
+		nl_socket_free(state->control_sock);
+	}
 
-	return ret;
+	return err;
 
 nla_put_failure:
 	printf("Failed to put attributes on netlink message\n");
-	return ret;
+	return err;
 }
 
 int lunatik_dostring(struct lunatik_nl_state *state,
