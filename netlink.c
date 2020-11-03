@@ -657,9 +657,15 @@ static int lunatikN_sendstate(struct sk_buff *buff, struct genl_info *info)
 		return 0;
 	}
 
+	if (!lunatik_getstate(state)) {
+		pr_info("Failed to get a refence to state %s\n", state->name);
+		reply_with(OP_ERROR, GET_STATE, info);
+	}
+
 	if (sendstate_msg(state, info)) {
 		pr_err("Failed to send message to user space\n");
 		reply_with(OP_ERROR, GET_STATE, info);
+		return 0;
 	}
 
 	state->inuse = true;
@@ -741,9 +747,7 @@ static int lunatikN_putstate(struct sk_buff *buff, struct genl_info *info)
 		return 0;
 	}
 
-	if (lunatik_putstate(s))
-		goto error;
-
+	lunatik_putstate(s);
 
 	s->inuse = false;
 	reply_with(OP_SUCESS, PUT_STATE, info);
