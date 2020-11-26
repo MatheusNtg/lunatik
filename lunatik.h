@@ -39,6 +39,7 @@ typedef struct lunatik_state {
 	struct hlist_node node;
 	struct lunatik_instance instance;
 	struct genl_info usr_state_info;
+	struct lunatik_data data;
 	lua_State *L;
 	char *code_buffer;
 	int buffer_offset;

@@ -141,6 +141,7 @@ void lunatik_closeall_from_default_ns(void)
 	spin_unlock_bh(&(instance->statestable_lock));
 }
 
+// TODO Is the refcount_inc_not_zero function atomic?
 inline bool lunatik_getstate(lunatik_State *s)
 {
 	return refcount_inc_not_zero(&s->users);

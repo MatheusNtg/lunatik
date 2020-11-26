@@ -194,7 +194,15 @@ static void reply_with(int reply, int command, struct genl_info *info)
 		return;
 	}
 
-	pr_debug("Message sent to user space\n");
+	switch (reply) {
+		case OP_ERROR:
+			pr_debug("Operation error send to user space\n");
+			break;
+		case OP_SUCESS:
+			pr_debug("Operation success send to user space\n");
+			break;
+	}
+
 }
 
 static void send_states_list(char *buffer, int flags, struct genl_info *info)
@@ -486,22 +494,27 @@ reset_reply_buffer:
 	return 0;
 }
 
-static int init_data(struct lunatik_data *data, char *buffer, size_t size)
+static int init_data(lunatik_State *state, char *buffer, size_t size)
 {
-	if ((data->buffer = kmalloc(size, GFP_KERNEL)) == NULL) {
+	if ((state->data.buffer = kmalloc(size, GFP_KERNEL)) == NULL) {
 		pr_err("Failed to allocate memory to data buffer\n");
 		return -1;
 	}
-	memcpy(data->buffer, buffer, size);
-	data->size = size;
+	memcpy(state->data.buffer, buffer, size);
+	state->data.size = size;
 	return 0;
+}
+
+static void free_data(lunatik_State *state)
+{
+	kfree(state->data.buffer);
+	state->data.size = 0;
 }
 
 static int handle_data(lua_State *L);
 
 static int lunatikN_data(struct sk_buff *buff, struct genl_info *info)
 {
-	struct lunatik_data data;
 	lunatik_State *state;
 	char *payload;
 	char *state_name;
@@ -519,12 +532,11 @@ static int lunatikN_data(struct sk_buff *buff, struct genl_info *info)
 	payload = nla_data(info->attrs[LUNATIK_DATA]);
 	payload_len = *((u32 *)nla_data(info->attrs[LUNATIK_DATA_LEN]));
 
-	err = init_data(&data, payload, payload_len);
-	if (err)
-		goto error;
+	if(init_data(state, payload, payload_len)) goto error;
 
 	if (!lunatik_getstate(state)) {
 		pr_err("Failed to get state %s\n", state_name);
+		free_data(state);
 		goto error;
 	}
 
@@ -532,17 +544,17 @@ static int lunatikN_data(struct sk_buff *buff, struct genl_info *info)
 
 	base = lua_gettop(state->L);
 	lua_pushcfunction(state->L, handle_data);
-	lua_pushlightuserdata(state->L, &data);
+	lua_pushlightuserdata(state->L, &state->data);
 	if (luaU_pcall(state->L, 1, 0)) {
 		pr_err("%s\n", lua_tostring(state->L, -1));
 		err = -1;
-		goto unlock;
 	}
 
 unlock:
 	spin_unlock_bh(&state->lock);
 	lua_settop(state->L, base);
 	lunatik_putstate(state);
+	free_data(state);
 
 	err ? reply_with(OP_ERROR, DATA, info) : reply_with(OP_SUCESS, DATA, info);
 
@@ -781,7 +793,8 @@ static int handle_data(lua_State *L)
 	lua_pop(L, 1);
 
 	luamem_newref(L);
-	luamem_setref(L, -1, req->buffer, req->size, NULL);
+	if (!luamem_setref(L, -1, req->buffer, req->size, NULL))
+		return luaL_error(L, "There is no memory on this position of the lua stack\n");
 
 	if (lua_getglobal(L, DATA_RECV_FUNC) != LUA_TFUNCTION)
 		return luaL_error(L, "couldn't find receive function: %s\n",
