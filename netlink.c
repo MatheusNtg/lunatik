@@ -276,6 +276,8 @@ static void init_codebuffer(lunatik_State *s, struct genl_info *info)
 {
 	s->scriptsize = *((u32*)nla_data(info->attrs[SCRIPT_SIZE]));
 
+	pr_info("Olha o tamanho do código que eu recebi (em bytes): %d\n", s->scriptsize);
+
 	if ((s->code_buffer = kmalloc(s->scriptsize, GFP_KERNEL)) == NULL) {
 		pr_err("Failed allocating memory to code buffer\n");
 		reply_with(OP_ERROR, EXECUTE_CODE, info);
@@ -291,11 +293,29 @@ static void add_fragtostate(char *fragment, lunatik_State *s)
 	s->buffer_offset++;
 }
 
-static int dostring(char *code, lunatik_State *s, const char *script_name)
+static void debug_code(char *code)
+{
+	int i = 0;
+	while(code[i] != '\0') {
+		switch(code[i]){
+			case '\t':
+				pr_info("\\t");
+				break;
+			case '\n':
+				pr_info("\\n");
+				break;
+			default:
+				pr_info("%c", code[i]);
+		}
+		i++;
+	}
+	pr_info("\\0\n");
+}
+
+static int dostring(lunatik_State *s, const char *script_name)
 {
 	int err = 0;
 	int base;
-	spin_lock_bh(&s->lock);
 
 	if (!lunatik_getstate(s)) {
 		pr_err("Failed to get state\n");
@@ -303,22 +323,33 @@ static int dostring(char *code, lunatik_State *s, const char *script_name)
 		goto out;
 	}
 
+	pr_info("Antes de executar o código, é isso que estou tentando carregar: \n");
+
+	spin_lock_bh(&s->lock);
 	base = lua_gettop(s->L);
-	if ((err = luaU_dostring(s->L, code, s->scriptsize, script_name))) {
+	if ((err = luaL_dostring(s->L, s->code_buffer))) {
 		pr_err("%s\n", lua_tostring(s->L, -1));
 	}
 
+	spin_unlock_bh(&s->lock);
 	lunatik_putstate(s);
 	lua_settop(s->L, base);
 
 out:
+	// DÚVIDA: Eu já carreguei o bytecode em lua, então já posso liberar o buffer de código para o estado?
 	kfree(s->code_buffer);
-	spin_unlock_bh(&s->lock);
+	s->buffer_offset = 0;
 	return err;
 }
 
 static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 {
+#ifndef LUNATIK_UNUSED
+	pr_info("Estou simulando a carga de código\n");
+	reply_with(OP_SUCESS, EXECUTE_CODE, info);
+	return 0;
+#endif
+
 	struct lunatik_state *s;
 	const char *script_name;
 	char *fragment;
@@ -328,31 +359,46 @@ static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 
 	pr_debug("Received a EXECUTE_CODE message\n");
 
+	pr_info("%s: CHECKPOINT 1\n", __func__);
+
 	state_name = (char *)nla_data(info->attrs[STATE_NAME]);
 	fragment = (char *)nla_data(info->attrs[CODE]);
 	flags = *((u8*)nla_data(info->attrs[FLAGS]));
 
+	pr_info("%s: CHECKPOINT 2\n", __func__);
+	pr_info("Olha o estado que eu recebi: %s\n", state_name);
+	pr_info("Olha o fragmento que eu recebi: %s\n", fragment);
+	pr_info("Olha as flags que eu recebi: %d\n", flags);
+
+	pr_info("%s: CHECKPOINT 3\n", __func__);
 	if ((s = lunatik_netstatelookup(state_name, genl_info_net(info))) == NULL) {
-		pr_err("Error finding klua state\n");
+		pr_err("Error finding lunatik state\n");
 		reply_with(OP_ERROR, EXECUTE_CODE, info);
 		return 0;
 	}
 
+	pr_info("%s: CHECKPOINT 4\n", __func__);
 	if (flags & LUNATIK_INIT) {
 		init_codebuffer(s, info);
 	}
 
+	pr_info("%s: CHECKPOINT 5\n", __func__);
 	if (flags & LUNATIK_MULTI) {
 		add_fragtostate(fragment, s);
 	}
 
+	pr_info("%s: CHECKPOINT 6\n", __func__);
 	if (flags & LUNATIK_DONE){
-		strcpy(s->code_buffer, fragment);
-		script_name = nla_data(info->attrs[SCRIPT_NAME]);
-		err = dostring(s->code_buffer, s, script_name);
+		// TODO Verificar se eu n deveria colocar um offset visto que é o fragmento final
+		strcpy(s->code_buffer + (s->buffer_offset * LUNATIK_FRAGMENT_SIZE), fragment);
+		pr_info("%s: CHECKPOINT 7\n", __func__);
+		//script_name = nla_data(info->attrs[SCRIPT_NAME]);
+		err = dostring(s, "Lunatik");
+		pr_info("%s: CHECKPOINT 8\n", __func__);
 		err ? reply_with(OP_ERROR, EXECUTE_CODE, info) : reply_with(OP_SUCESS, EXECUTE_CODE, info);
 	}
 
+	pr_info("%s: CHECKPOINT FINAL\n", __func__);
 	return 0;
 }
 
@@ -515,6 +561,10 @@ static int handle_data(lua_State *L);
 
 static int lunatikN_data(struct sk_buff *buff, struct genl_info *info)
 {
+
+	pr_info("Estou simulando a execução de um recebimento de dado\n");
+
+#ifndef LUNATIK_UNUSED
 	lunatik_State *state;
 	char *payload;
 	char *state_name;
@@ -549,6 +599,7 @@ static int lunatikN_data(struct sk_buff *buff, struct genl_info *info)
 		pr_err("%s\n", lua_tostring(state->L, -1));
 		err = -1;
 	}
+	pr_info("Estou simulando a execução do handle_data\n");
 
 unlock:
 	spin_unlock_bh(&state->lock);
@@ -562,6 +613,9 @@ unlock:
 
 error:
 	reply_with(OP_ERROR, DATA, info);
+	return 0;
+#endif
+	reply_with(OP_SUCESS, DATA, info);
 	return 0;
 }
 

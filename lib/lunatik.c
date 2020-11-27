@@ -99,7 +99,7 @@ static int send_fragment(struct lunatik_nl_state *state, const char *original_sc
 	NLA_PUT_STRING(msg, STATE_NAME, state->name);
 	NLA_PUT_STRING(msg, CODE, fragment);
 
-	if (offset == 0)
+	if (flags & LUNATIK_INIT)
 		NLA_PUT_U32(msg, SCRIPT_SIZE, strlen(original_script));
 
 	if (flags & LUNATIK_DONE)
@@ -109,11 +109,13 @@ static int send_fragment(struct lunatik_nl_state *state, const char *original_sc
 
 	if ((err = nl_send_auto(state->control_sock, msg)) < 0) {
 		printf("Failed to send fragment\n %s\n", nl_geterror(err));
+		free(fragment);
 		nlmsg_free(msg);
 		return err;
 	}
 
 	nlmsg_free(msg);
+	free(fragment);
 
 	return 0;
 

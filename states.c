@@ -194,6 +194,8 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 	lunatik_State *s = lunatik_netstatelookup(name, net);
 	struct lunatik_instance *instance;
 
+	pr_info("%s: CHECKPOINT 1", __func__);
+
 	instance = lunatik_pernet(net);
 
 	int namelen = strnlen(name, LUNATIK_NAME_MAXSIZE);
@@ -212,6 +214,7 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 		return NULL;
 	}
 
+	pr_info("%s: CHECKPOINT 2", __func__);
 	if (maxalloc < LUNATIK_MIN_ALLOC_BYTES) {
 		pr_err("maxalloc %zu should be greater then MIN_ALLOC %zu\n",
 		    maxalloc, LUNATIK_MIN_ALLOC_BYTES);
@@ -223,23 +226,27 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 		return NULL;
 	}
 
+	pr_info("%s: CHECKPOINT 3", __func__);
 	spin_lock_init(&s->lock);
 	s->maxalloc  = maxalloc;
 	s->curralloc = 0;
 	memcpy(&(s->name), name, namelen);
 
+	pr_info("%s: CHECKPOINT 4", __func__);
 	if (state_init(s)) {
 		pr_err("could not allocate a new lua state\n");
 		kfree(s);
 		return NULL;
 	}
 
+	pr_info("%s: CHECKPOINT 5", __func__);
 	spin_lock_bh(&(instance->statestable_lock));
 	hash_add_rcu(instance->states_table, &(s->node), name_hash(instance,name));
 	refcount_inc(&(s->users));
 	atomic_inc(&(instance->states_count));
 	spin_unlock_bh(&(instance->statestable_lock));
 
+	pr_info("%s: CHECKPOINT 6", __func__);
 	pr_debug("new state created: %.*s\n", namelen, name);
 	return s;
 }
