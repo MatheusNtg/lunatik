@@ -58,7 +58,7 @@ inline lunatik_State *lunatik_statelookup(const char *name)
 void state_destroy(lunatik_State *s)
 {
 	hash_del_rcu(&s->node);
-	atomic_dec(&(s->instance.states_count));
+	atomic_dec(&(s->instance->states_count));
 
 	spin_lock_bh(&s->lock);
 	if (s->L != NULL) {
@@ -150,7 +150,7 @@ inline bool lunatik_getstate(lunatik_State *s)
 int lunatik_putstate(lunatik_State *s)
 {
 	refcount_t *users = &s->users;
-	spinlock_t *refcnt_lock = &(s->instance.rfcnt_lock);
+	spinlock_t *refcnt_lock = &(s->instance->rfcnt_lock);
 
 	if (WARN_ON(s == NULL))
 		return 1;
@@ -172,6 +172,12 @@ error_and_unlock:
 	return 1;
 }
 
+/* DUVIDA
+ * Se houver uma operação T1 que referencia um estado A e T1 estava tentando destruir
+ * A quando foi interrompido por uma operação T2 que busca por este mesmo estado A para utilizá-lo
+ * então T2 terá uma referência NULA? 
+ * Resposta: Teoricamente o fato de estarmos trabalhando com uma tabela com RCU ativido não deixa o
+ * nosso nó da tabela ser excluído enquanto houver referências para ele*/
 lunatik_State *lunatik_netstatelookup(const char *name, struct net *net)
 {
 	lunatik_State *state;
@@ -194,8 +200,6 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 	lunatik_State *s = lunatik_netstatelookup(name, net);
 	struct lunatik_instance *instance;
 
-	pr_info("%s: CHECKPOINT 1", __func__);
-
 	instance = lunatik_pernet(net);
 
 	int namelen = strnlen(name, LUNATIK_NAME_MAXSIZE);
@@ -214,7 +218,6 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 		return NULL;
 	}
 
-	pr_info("%s: CHECKPOINT 2", __func__);
 	if (maxalloc < LUNATIK_MIN_ALLOC_BYTES) {
 		pr_err("maxalloc %zu should be greater then MIN_ALLOC %zu\n",
 		    maxalloc, LUNATIK_MIN_ALLOC_BYTES);
@@ -226,27 +229,24 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 		return NULL;
 	}
 
-	pr_info("%s: CHECKPOINT 3", __func__);
 	spin_lock_init(&s->lock);
 	s->maxalloc  = maxalloc;
 	s->curralloc = 0;
 	memcpy(&(s->name), name, namelen);
 
-	pr_info("%s: CHECKPOINT 4", __func__);
 	if (state_init(s)) {
 		pr_err("could not allocate a new lua state\n");
 		kfree(s);
 		return NULL;
 	}
 
-	pr_info("%s: CHECKPOINT 5", __func__);
 	spin_lock_bh(&(instance->statestable_lock));
-	hash_add_rcu(instance->states_table, &(s->node), name_hash(instance,name));
+	hash_add_rcu(instance->states_table, &(s->node), name_hash(instance, name));
 	refcount_inc(&(s->users));
 	atomic_inc(&(instance->states_count));
+	s->instance = instance;
 	spin_unlock_bh(&(instance->statestable_lock));
 
-	pr_info("%s: CHECKPOINT 6", __func__);
 	pr_debug("new state created: %.*s\n", namelen, name);
 	return s;
 }

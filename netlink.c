@@ -60,10 +60,10 @@ struct nla_policy lunatik_policy[ATTRS_COUNT] = {
 	[STATES_LIST] = { .type = NLA_STRING },
 	[LUNATIK_DATA]= { .type = NLA_STRING },
 	[LUNATIK_DATA_LEN] = { .type = NLA_U32},
-	[SCRIPT_SIZE] = { .type = NLA_U32 },
+	[PAYLOAD_SIZE] = { .type = NLA_U32 },
 	[MAX_ALLOC]   = { .type = NLA_U32 },
 	[CURR_ALLOC]  = { .type = NLA_U32},
-	[FLAGS]       = { .type = NLA_U8 },
+	[TYPE]        = { .type = NLA_U8 },
 	[OP_SUCESS]   = { .type = NLA_U8 },
 	[OP_ERROR]    = { .type = NLA_U8 },
 };
@@ -78,7 +78,7 @@ static const struct genl_ops l_ops[] = {
 #endif
 	},
 	{
-		.cmd    = EXECUTE_CODE,
+		.cmd    = DO_STRING,
 		.doit   = lunatikN_dostring,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
 		.policy = lunatik_policy
@@ -147,6 +147,7 @@ struct genl_family lunatik_family = {
 	.module  = THIS_MODULE,
 	.ops     = l_ops,
 	.n_ops   = ARRAY_SIZE(l_ops),
+	.parallel_ops = false,
 };
 
 static void fill_states_list(char *buffer, struct lunatik_instance *instance)
@@ -261,7 +262,6 @@ static int lunatikN_newstate(struct sk_buff *buff, struct genl_info *info)
 	if (s->inuse)
 		goto error;
 
-	s->instance = *instance;
 	reply_with(OP_SUCESS, CREATE_STATE, info);
 	s->inuse = true;
 
@@ -272,18 +272,22 @@ error:
 	return 0;
 }
 
-static void init_codebuffer(lunatik_State *s, struct genl_info *info)
+static int init_codebuffer(lunatik_State *s, struct genl_info *info)
 {
 	s->scriptsize = *((u32*)nla_data(info->attrs[SCRIPT_SIZE]));
 
-	pr_info("Olha o tamanho do código que eu recebi (em bytes): %d\n", s->scriptsize);
+	if (s->scriptsize == 0) {
+		pr_info("Tamanho do script é igual a zero\n");
+		return -1;
+	}
 
 	if ((s->code_buffer = kmalloc(s->scriptsize, GFP_KERNEL)) == NULL) {
 		pr_err("Failed allocating memory to code buffer\n");
-		reply_with(OP_ERROR, EXECUTE_CODE, info);
+		return -1;
 	}
 
 	s->buffer_offset = 0;
+	return 0;
 }
 
 static void add_fragtostate(char *fragment, lunatik_State *s)
@@ -312,7 +316,7 @@ static void debug_code(char *code)
 	pr_info("\\0\n");
 }
 
-static int dostring(lunatik_State *s, const char *script_name)
+static int dostring(lunatik_State *s)
 {
 	int err = 0;
 	int base;
@@ -322,8 +326,6 @@ static int dostring(lunatik_State *s, const char *script_name)
 		err = -1;
 		goto out;
 	}
-
-	pr_info("Antes de executar o código, é isso que estou tentando carregar: \n");
 
 	spin_lock_bh(&s->lock);
 	base = lua_gettop(s->L);
@@ -336,8 +338,8 @@ static int dostring(lunatik_State *s, const char *script_name)
 	lua_settop(s->L, base);
 
 out:
-	// DÚVIDA: Eu já carreguei o bytecode em lua, então já posso liberar o buffer de código para o estado?
 	kfree(s->code_buffer);
+	s->code_buffer = NULL;
 	s->buffer_offset = 0;
 	return err;
 }
@@ -356,49 +358,51 @@ static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 	char *state_name;
 	int err;
 	u8 flags;
-
+	flags = 0;
 	pr_debug("Received a EXECUTE_CODE message\n");
-
-	pr_info("%s: CHECKPOINT 1\n", __func__);
 
 	state_name = (char *)nla_data(info->attrs[STATE_NAME]);
 	fragment = (char *)nla_data(info->attrs[CODE]);
 	flags = *((u8*)nla_data(info->attrs[FLAGS]));
+	err = 0;
 
-	pr_info("%s: CHECKPOINT 2\n", __func__);
-	pr_info("Olha o estado que eu recebi: %s\n", state_name);
-	pr_info("Olha o fragmento que eu recebi: %s\n", fragment);
-	pr_info("Olha as flags que eu recebi: %d\n", flags);
+	if (state_name == NULL) {
+		pr_info("Nome do estado nulo\n");
+		goto error;
+	}
 
-	pr_info("%s: CHECKPOINT 3\n", __func__);
+	if (fragment == NULL) {
+		pr_info("Fragmento nulo\n");
+		goto error;
+	}
+
+	if (flags == 0) {
+		pr_info("Flags é igual a 0\n");
+		goto error;
+	}
+
 	if ((s = lunatik_netstatelookup(state_name, genl_info_net(info))) == NULL) {
 		pr_err("Error finding lunatik state\n");
-		reply_with(OP_ERROR, EXECUTE_CODE, info);
-		return 0;
+		goto error;
 	}
 
-	pr_info("%s: CHECKPOINT 4\n", __func__);
 	if (flags & LUNATIK_INIT) {
-		init_codebuffer(s, info);
+		if (init_codebuffer(s, info)) goto error;
 	}
 
-	pr_info("%s: CHECKPOINT 5\n", __func__);
 	if (flags & LUNATIK_MULTI) {
 		add_fragtostate(fragment, s);
 	}
 
-	pr_info("%s: CHECKPOINT 6\n", __func__);
 	if (flags & LUNATIK_DONE){
-		// TODO Verificar se eu n deveria colocar um offset visto que é o fragmento final
-		strcpy(s->code_buffer + (s->buffer_offset * LUNATIK_FRAGMENT_SIZE), fragment);
-		pr_info("%s: CHECKPOINT 7\n", __func__);
-		//script_name = nla_data(info->attrs[SCRIPT_NAME]);
-		err = dostring(s, "Lunatik");
-		pr_info("%s: CHECKPOINT 8\n", __func__);
-		err ? reply_with(OP_ERROR, EXECUTE_CODE, info) : reply_with(OP_SUCESS, EXECUTE_CODE, info);
+		err = dostring(s);
 	}
 
-	pr_info("%s: CHECKPOINT FINAL\n", __func__);
+	err ? reply_with(OP_ERROR, EXECUTE_CODE, info) : reply_with(OP_SUCESS, EXECUTE_CODE, info);
+	return 0;
+
+error:
+	reply_with(OP_ERROR, EXECUTE_CODE, info);
 	return 0;
 }
 

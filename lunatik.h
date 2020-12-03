@@ -20,15 +20,16 @@
 #ifndef LUNATIK_STATES_H
 #define LUNATIK_STATES_H
 
+#include <linux/hashtable.h>
+
 #include "lua/lua.h"
 #include "lunatik_conf.h"
 #include "netlink.h"
 #include "luautil.h"
 
 struct lunatik_instance {
-	struct hlist_head states_table[LUNATIK_HASH_BUCKETS];
+	DECLARE_HASHTABLE(states_table, ilog2(LUNATIK_HASH_BUCKETS));
 	struct reply_buffer reply_buffer;
-	struct net namespace;
 	spinlock_t statestable_lock;
 	spinlock_t rfcnt_lock;
 	spinlock_t sendmessage_lock;
@@ -37,7 +38,7 @@ struct lunatik_instance {
 
 typedef struct lunatik_state {
 	struct hlist_node node;
-	struct lunatik_instance instance;
+	struct lunatik_instance *instance;
 	struct genl_info usr_state_info;
 	struct lunatik_data data;
 	lua_State *L;

@@ -100,7 +100,7 @@ int lunatikS_newstate(struct lunatik_session *session, struct lunatik_nl_state *
 int lunatik_closestate(struct lunatik_nl_state *state);
 
 int lunatik_dostring(struct lunatik_nl_state *state,
-	const char *script, const char *script_name, size_t total_code_size);
+	const char *script, size_t total_code_size);
 
 int lunatikS_list(struct lunatik_session *session);
 

@@ -79,33 +79,19 @@ error:
 	return err;
 }
 
-static int send_fragment(struct lunatik_nl_state *state, const char *original_script, int offset,
-	const char *script_name, int flags)
+static int send_fragment(struct lunatik_nl_state *state, struct fragment frag)
 {
 	struct nl_msg *msg;
-	char *fragment;
 	int err = -1;
-	if ((msg = prepare_message(EXECUTE_CODE, 0)) == NULL){
+		if ((msg = prepare_message(DO_STRING, 0)) == NULL){
 		nlmsg_free(msg);
 		return err;
 	}
 
-	if ((fragment = malloc(sizeof(char) * LUNATIK_FRAGMENT_SIZE)) == NULL) {
-		printf("Failed to allocate memory to code fragment\n");
-		return -ENOMEM;
-	}
-	strncpy(fragment, original_script + (offset * LUNATIK_FRAGMENT_SIZE), LUNATIK_FRAGMENT_SIZE);
-
-	NLA_PUT_STRING(msg, STATE_NAME, state->name);
-	NLA_PUT_STRING(msg, CODE, fragment);
-
-	if (flags & LUNATIK_INIT)
-		NLA_PUT_U32(msg, SCRIPT_SIZE, strlen(original_script));
-
-	if (flags & LUNATIK_DONE)
-		NLA_PUT_STRING(msg, SCRIPT_NAME, script_name);
-
-	NLA_PUT_U8(msg, FLAGS, flags);
+	NLA_PUT_U8(msg, FRAG_TYPE, frag.frag_type);
+	NLA_PUT_U32(msg, PAYLOAD_SIZE, frag.payload_size);
+	NLA_PUT_STRING(msg, STATE_NAME, frag.state_name);
+	NLA_PUT_STRING(msg, CODE, frag.payload);
 
 	if ((err = nl_send_auto(state->control_sock, msg)) < 0) {
 		printf("Failed to send fragment\n %s\n", nl_geterror(err));
@@ -250,39 +236,74 @@ nla_put_failure:
 	return ret;
 }
 
+/**
+Envia mensagens de controle para o kernel, as mensagens possívesi são:
+INIT_FRAG -> Sinaliza que o User Space tem a intenção de enviar um código para o kernel
+		a partir disso podemos alocar o buffer no kernel e nos preparar para re-
+		ceber os payloads contendo o código
+DONE_FRAG -> Sinaliza para o kernel que o espaço de usuário terminou de enviar os payloads
+		e que agora ele pode executar o código
+
+Obs: Em ambos os casos, o kernel tem que responder, tanto para avisar o espaço de usuário se
+	conseguiu alocar a memória necessária para carregar o código quanto para dizer se o
+	código conseguiu ser executado ou não
+*/
+static inline int send_control_fragment(struct lunatik_nl_state *state, enum fragment_type frag_type)
+{
+	struct fragment frag;
+
+	frag.type = frag_type;
+	frag.payload = NULL;
+	frag.payload_size = 0;
+	strncpy(frag.state_name, state->name, LUNATIK_NAME_MAXSIZE);
+
+	if (send_fragment(state, frag) || receive_state_op_result(state))
+		return -1;
+
+	return 0;
+}
+
 int lunatik_dostring(struct lunatik_nl_state *state,
-	const char *script, const char *script_name, size_t total_code_size)
+	const char *script, size_t total_code_size)
 {
 	int err = -1;
-	int parts = 0;
+	int remaining_bytes = 0;
+	int bytes_to_send = 0;
+	int offset = 0;
+	struct fragment frag;
 
-	if (total_code_size <= LUNATIK_FRAGMENT_SIZE) {
-		err = send_fragment(state, script, 0, script_name, LUNATIK_INIT | LUNATIK_DONE);
-		if (err)
-			return err;
-	} else {
-		parts = (total_code_size % LUNATIK_FRAGMENT_SIZE == 0) ?
-			total_code_size / LUNATIK_FRAGMENT_SIZE :
-			(total_code_size / LUNATIK_FRAGMENT_SIZE) + 1;
+	if (script == NULL)
+		return err;
 
-		for (int i = 0; i < parts - 1; i++) {
-			if (i == 0)
-				err = send_fragment(state, script, i, script_name, LUNATIK_INIT | LUNATIK_MULTI);
-			else
-				err = send_fragment(state, script, i, script_name, LUNATIK_MULTI);
+	printf("Enviando %s\n para o kernel\n", script);
 
-			nl_wait_for_ack(state->control_sock);
+	if ((err = send_control_fragment(state, INIT_FRAG)))
+		return err;
 
-			if (err)
-				return err;
-		}
+	remaining_bytes = total_code_size;
 
-		err = send_fragment(state, script, parts - 1, script_name, LUNATIK_DONE);
-		if (err)
-			return err;
+	while(remaining_bytes > 0) {
+		bytes_to_send = LUNATIK_FRAGMENT_SIZE < remaining_bytes ? LUNATIK_FRAGMENT_SIZE : remaining_bytes;
+		frag.type = PAYLOAD_FRAG;
+		frag.payload_size = bytes_to_send;
+		strncpy(frag.state_name, state->name, LUNATIK_NAME_MAXSIZE);
+
+		if ((frag.payload = malloc(bytes_to_send)) == NULL)
+			send_control_fragment(state, ERROR_FRAG);
+
+		memcpy(frag.payload, script + offset, bytes_to_send);
+		offset += bytes_to_send;
+		remaining_bytes -= bytes_to_send;
+
+		if (send_fragment(state, frag))
+			send_control_fragment(state, ERROR_FRAG);
+		free(frag.payload);
 	}
 
-	return receive_state_op_result(state);
+	if ((err = send_control_fragment(state, DONE_FRAG)))
+		return err;
+
+	return 0;
 }
 
 int lunatikS_list(struct lunatik_session *session)

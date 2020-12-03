@@ -174,15 +174,13 @@ static int lstate_dostring(lua_State *L)
 	struct lunatik_nl_state *s = getnlstate(L);
 	size_t len;
 	const char *payload = luaL_checklstring(L, 2, &len);
-	const char *script_name = luaL_optstring(L, 3, "Lunatik");
-
-	if (strlen(script_name) > LUNATIK_SCRIPTNAME_MAXSIZE)
-		return luaL_argerror(L, 3, "script name too long");
 
 	if (!s->isvalid)
 		return luaL_error(L, "invalid state");
 
-	int status = lunatik_dostring(s, payload, script_name, len);
+	if (len >= LUNATIK_MAX_SCRIPT_SIZE) goto error;
+
+	int status = lunatik_dostring(s, payload, len);
 
 	if (status)
 		goto error;

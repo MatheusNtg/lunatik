@@ -15,7 +15,7 @@ local kscript = [[
 
 local s1 = session:newstate's1'
 
-local err = s1:dostring(kscript, 'send script')
+local err = s1:dostring(kscript)
 
 err = s1:send(buffer)
 

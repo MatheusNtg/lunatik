@@ -19,6 +19,8 @@
 #ifndef NETLINK_COMMOM_H
 #define NETLINK_COMMOM_H
 
+#include "lunatik_conf.h"
+
 #ifdef _KERNEL
 extern struct genl_family lunatik_family;
 #include <net/genetlink.h>
@@ -26,18 +28,14 @@ extern struct genl_family lunatik_family;
 
 #define LUNATIK_FRAGMENT_SIZE	(3000) /* TODO Find, a more precise size */
 #define DELIMITER	(3) /* How many delimiters will be necessary in each part of the message */
-
-/*Lunatik generic netlink protocol flags*/
-#define LUNATIK_INIT	(0x01) /* Initializes the needed variables for script execution */
-#define LUNATIK_MULTI	(0x02) /* A Fragment of a multipart message						*/
-#define LUNATIK_DONE	(0x04) /* Last message of a multipart message					*/
+#define LUNATIK_MAX_SCRIPT_SIZE	(64000)
 
 #define LUNATIK_FAMILY	("lunatik_family")
 #define LUNATIK_NLVERSION	(1)
 
 enum lunatik_operations {
 	CREATE_STATE = 1, /* Starts at 1 because 0 is used by generic netlink */
-	EXECUTE_CODE,
+	DO_STRING,
 	DESTROY_STATE,
 	LIST_STATES,
 	DATA,
@@ -54,8 +52,8 @@ enum lunatik_attrs {
 	STATES_COUNT,
 	PARTS,
 	CODE,
-	FLAGS,
-	SCRIPT_SIZE,
+	FRAG_TYPE,
+	PAYLOAD_SIZE,
 	SCRIPT_NAME,
 	STATES_LIST_EMPTY,
 	OP_SUCESS,
@@ -67,6 +65,20 @@ enum lunatik_attrs {
 	NOT_IN_USE,
 	ATTRS_COUNT
 #define ATTRS_MAX	(ATTRS_COUNT - 1)
+};
+
+enum fragment_type {
+	INIT_FRAG,
+	PAYLOAD_FRAG,
+	DONE_FRAG,
+	ERROR_FRAG
+};
+
+struct fragment {
+	enum fragment_type type;
+	size_t payload_size;
+	char state_name[LUNATIK_NAME_MAXSIZE];
+	char *payload;
 };
 
 #endif /* NETLINK_COMMOM_H */
