@@ -32,7 +32,7 @@
 
 static int lunatik_family;
 
-static struct nl_msg *prepare_message(int command, int flags)
+static struct nl_msg *prepare_message(int command)
 {
 	struct nl_msg *msg;
 
@@ -47,21 +47,15 @@ static struct nl_msg *prepare_message(int command, int flags)
 		return NULL;
 	}
 
-	NLA_PUT_U8(msg, FLAGS, flags);
-
 	return msg;
-
-nla_put_failure:
-	printf("Failed to put attributes preparing the message\n");
-	return NULL;
 }
 
-static int send_simple_control_msg(struct lunatik_session *session, int command, int flags)
+static int send_simple_control_msg(struct lunatik_session *session, int command)
 {
 	struct nl_msg *msg;
 	int err = -1;
 
-	if ((msg = prepare_message(command, flags)) == NULL) {
+	if ((msg = prepare_message(command)) == NULL) {
 		printf("Error preparing message\n");
 		goto error;
 	}
@@ -79,35 +73,39 @@ error:
 	return err;
 }
 
-static int send_fragment(struct lunatik_nl_state *state, struct fragment frag)
+static int send_scp_packet(struct lunatik_nl_state *state, struct scp_packet packet)
 {
 	struct nl_msg *msg;
 	int err = -1;
-		if ((msg = prepare_message(DO_STRING, 0)) == NULL){
+	if ((msg = prepare_message(DO_STRING)) == NULL){
 		nlmsg_free(msg);
 		return err;
 	}
 
-	NLA_PUT_U8(msg, FRAG_TYPE, frag.frag_type);
-	NLA_PUT_U32(msg, PAYLOAD_SIZE, frag.payload_size);
-	NLA_PUT_STRING(msg, STATE_NAME, frag.state_name);
-	NLA_PUT_STRING(msg, CODE, frag.payload);
+	NLA_PUT_U8(msg, SCP_PACKET_TYPE, packet.header->type);
+	NLA_PUT_U32(msg, PAYLOAD_SIZE, packet.header->payload_size);
+	NLA_PUT_STRING(msg, STATE_NAME, packet.header->state_name);
+
+	if (packet.header->script_size != 0)
+		NLA_PUT_U32(msg, SCRIPT_SIZE, packet.header->script_size);
+	
+	if (packet.payload != NULL)
+		NLA_PUT_STRING(msg, CODE, packet.payload->payload);
 
 	if ((err = nl_send_auto(state->control_sock, msg)) < 0) {
 		printf("Failed to send fragment\n %s\n", nl_geterror(err));
-		free(fragment);
 		nlmsg_free(msg);
 		return err;
 	}
 
+	nl_wait_for_ack(state->control_sock);
+
 	nlmsg_free(msg);
-	free(fragment);
 
 	return 0;
 
 nla_put_failure:
 	printf("Failed putting attributes on the message\n");
-	free(fragment);
 	return err;
 }
 
@@ -152,7 +150,7 @@ int init_recv_datasocket_on_kernel(struct lunatik_nl_state *state)
 	struct nl_msg *msg;
 	int err = -1;
 
-	if ((msg = prepare_message(DATA_INIT, 0)) == NULL) {
+	if ((msg = prepare_message(DATA_INIT)) == NULL) {
 		printf("Error preparing message\n");
 		goto error;
 	}
@@ -190,7 +188,7 @@ int lunatikS_newstate(struct lunatik_session *session, struct lunatik_nl_state *
 	struct nl_msg *msg;
 	int ret = -1;
 
-	if ((msg = prepare_message(CREATE_STATE, 0)) == NULL)
+	if ((msg = prepare_message(CREATE_STATE)) == NULL)
 		return ret;
 
 	NLA_PUT_STRING(msg, STATE_NAME, cmd->name);
@@ -213,7 +211,7 @@ int lunatik_closestate(struct lunatik_nl_state *state)
 	struct nl_msg *msg;
 	int ret = -1;
 
-	if ((msg = prepare_message(DESTROY_STATE, 0)) == NULL)
+	if ((msg = prepare_message(DESTROY_STATE)) == NULL)
 		return ret;
 
 	NLA_PUT_STRING(msg, STATE_NAME, state->name);
@@ -236,33 +234,6 @@ nla_put_failure:
 	return ret;
 }
 
-/**
-Envia mensagens de controle para o kernel, as mensagens possívesi são:
-INIT_FRAG -> Sinaliza que o User Space tem a intenção de enviar um código para o kernel
-		a partir disso podemos alocar o buffer no kernel e nos preparar para re-
-		ceber os payloads contendo o código
-DONE_FRAG -> Sinaliza para o kernel que o espaço de usuário terminou de enviar os payloads
-		e que agora ele pode executar o código
-
-Obs: Em ambos os casos, o kernel tem que responder, tanto para avisar o espaço de usuário se
-	conseguiu alocar a memória necessária para carregar o código quanto para dizer se o
-	código conseguiu ser executado ou não
-*/
-static inline int send_control_fragment(struct lunatik_nl_state *state, enum fragment_type frag_type)
-{
-	struct fragment frag;
-
-	frag.type = frag_type;
-	frag.payload = NULL;
-	frag.payload_size = 0;
-	strncpy(frag.state_name, state->name, LUNATIK_NAME_MAXSIZE);
-
-	if (send_fragment(state, frag) || receive_state_op_result(state))
-		return -1;
-
-	return 0;
-}
-
 int lunatik_dostring(struct lunatik_nl_state *state,
 	const char *script, size_t total_code_size)
 {
@@ -270,37 +241,52 @@ int lunatik_dostring(struct lunatik_nl_state *state,
 	int remaining_bytes = 0;
 	int bytes_to_send = 0;
 	int offset = 0;
-	struct fragment frag;
+	struct scp_packet packet;
+	struct scp_header *header;
+	struct scp_payload *payload;
 
 	if (script == NULL)
 		return err;
 
-	printf("Enviando %s\n para o kernel\n", script);
+	if ((header = malloc(sizeof(struct scp_header))) == NULL)
+		return err;
 
-	if ((err = send_control_fragment(state, INIT_FRAG)))
+	strncpy(header->state_name, state->name, LUNATIK_NAME_MAXSIZE);
+	header->type = INIT;
+	header->payload_size = 0;
+	header->script_size = total_code_size;
+
+	packet.header = header;
+	packet.payload = NULL;
+
+	if ((err = send_scp_packet(state, packet)))
 		return err;
 
 	remaining_bytes = total_code_size;
 
 	while(remaining_bytes > 0) {
 		bytes_to_send = LUNATIK_FRAGMENT_SIZE < remaining_bytes ? LUNATIK_FRAGMENT_SIZE : remaining_bytes;
-		frag.type = PAYLOAD_FRAG;
-		frag.payload_size = bytes_to_send;
-		strncpy(frag.state_name, state->name, LUNATIK_NAME_MAXSIZE);
+		printf("Bytes a serem enviados %d\n", bytes_to_send);
+		
+		header->type = PAYLOAD;
+		header->payload_size = bytes_to_send;
 
-		if ((frag.payload = malloc(bytes_to_send)) == NULL)
-			send_control_fragment(state, ERROR_FRAG);
+		// if ((frag.payload = malloc(bytes_to_send)) == NULL)
+		// 	send_control_scp_packet(state, ERROR_FRAG);
 
-		memcpy(frag.payload, script + offset, bytes_to_send);
+		// memcpy(frag.payload, script + offset, bytes_to_send);
 		offset += bytes_to_send;
 		remaining_bytes -= bytes_to_send;
 
-		if (send_fragment(state, frag))
-			send_control_fragment(state, ERROR_FRAG);
-		free(frag.payload);
+		if (send_scp_packet(state, packet));
+			// send_control_scp_packet(state, ERROR_FRAG);
+		// free(frag.payload);
 	}
 
-	if ((err = send_control_fragment(state, DONE_FRAG)))
+	header->type = DONE;
+	header->payload_size = 0;
+
+	if ((err = send_scp_packet(state, packet)))
 		return err;
 
 	return 0;
@@ -310,7 +296,7 @@ int lunatikS_list(struct lunatik_session *session)
 {
 	int err = -1;
 
-	if ((err = send_simple_control_msg(session, LIST_STATES, 0)))
+	if ((err = send_simple_control_msg(session, LIST_STATES)))
 		return err;
 
 	nl_recvmsgs_default(session->control_sock);
@@ -320,7 +306,7 @@ int lunatikS_list(struct lunatik_session *session)
 		return -1;
 
 	while (session->status == SESSION_RECEIVING) {
-		send_simple_control_msg(session, LIST_STATES, 0);
+		send_simple_control_msg(session, LIST_STATES);
 		nl_recvmsgs_default(session->control_sock);
 		nl_wait_for_ack(session->control_sock);
 	}
@@ -673,7 +659,7 @@ void lunatikS_close(struct lunatik_session *session)
 
 int lunatik_datasend(struct lunatik_nl_state *state, const char *payload, size_t len)
 {
-	struct nl_msg *msg = prepare_message(DATA, 0);
+	struct nl_msg *msg = prepare_message(DATA);
 	int err = 0;
 
 	if (msg == NULL)
@@ -774,7 +760,7 @@ static int lunatik_initdata(struct lunatik_nl_state *state)
 
 struct lunatik_nl_state *lunatikS_getstate(struct lunatik_session *session, const char *name)
 {
-	struct nl_msg *msg = prepare_message(GET_STATE, 0);
+	struct nl_msg *msg = prepare_message(GET_STATE);
 
 	NLA_PUT_STRING(msg, STATE_NAME, name);
 
@@ -822,7 +808,7 @@ int lunatik_getcurralloc(struct lunatik_nl_state *state)
 	struct nl_msg *msg;
 	int err = -1;
 
-	if ((msg = prepare_message(GET_CURRALLOC, 0)) == NULL)
+	if ((msg = prepare_message(GET_CURRALLOC)) == NULL)
 		return err;
 
 	NLA_PUT_STRING(msg, STATE_NAME, state->name);
@@ -840,10 +826,10 @@ nla_put_failure:
 int lunatik_putstate(struct lunatik_nl_state *state)
 {
 	struct nl_msg *msg;
-	
+
 	int err = -1;
 
-	if ((msg = prepare_message(PUT_STATE, 0)) == NULL) 
+	if ((msg = prepare_message(PUT_STATE)) == NULL)
 		return err;
 
 	NLA_PUT_STRING(msg, STATE_NAME, state->name);

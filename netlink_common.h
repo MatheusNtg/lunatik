@@ -26,9 +26,13 @@ extern struct genl_family lunatik_family;
 #include <net/genetlink.h>
 #endif /* _KERNEL */
 
-#define LUNATIK_FRAGMENT_SIZE	(3000) /* TODO Find, a more precise size */
+#define LUNATIK_FRAGMENT_SIZE	(10) /* TODO Find, a more precise size */
 #define DELIMITER	(3) /* How many delimiters will be necessary in each part of the message */
 #define LUNATIK_MAX_SCRIPT_SIZE	(64000)
+
+#define LUNATIK_INIT	(0x01)
+#define LUNATIK_MULTI	(0x02)
+#define LUNATIK_DONE	(0x04)
 
 #define LUNATIK_FAMILY	("lunatik_family")
 #define LUNATIK_NLVERSION	(1)
@@ -52,9 +56,11 @@ enum lunatik_attrs {
 	STATES_COUNT,
 	PARTS,
 	CODE,
-	FRAG_TYPE,
+	FLAGS,
+	SCP_PACKET_TYPE,
 	PAYLOAD_SIZE,
 	SCRIPT_NAME,
+	SCRIPT_SIZE,
 	STATES_LIST_EMPTY,
 	OP_SUCESS,
 	OP_ERROR,
@@ -67,18 +73,28 @@ enum lunatik_attrs {
 #define ATTRS_MAX	(ATTRS_COUNT - 1)
 };
 
-enum fragment_type {
-	INIT_FRAG,
-	PAYLOAD_FRAG,
-	DONE_FRAG,
-	ERROR_FRAG
+/*scp stands for Send Code Protocol*/
+enum scp_packet_type {
+	INIT,
+	PAYLOAD,
+	DONE,
+	ERROR
 };
 
-struct fragment {
-	enum fragment_type type;
-	size_t payload_size;
+struct scp_header {
 	char state_name[LUNATIK_NAME_MAXSIZE];
+	enum scp_packet_type type;
+	size_t payload_size;
+	size_t script_size;
+};
+
+struct scp_payload {
 	char *payload;
+};
+
+struct scp_packet {
+	struct scp_header *header;
+	struct scp_payload *payload;
 };
 
 #endif /* NETLINK_COMMOM_H */

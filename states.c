@@ -199,10 +199,11 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 {
 	lunatik_State *s = lunatik_netstatelookup(name, net);
 	struct lunatik_instance *instance;
+	int namelen;
 
 	instance = lunatik_pernet(net);
 
-	int namelen = strnlen(name, LUNATIK_NAME_MAXSIZE);
+	namelen = strnlen(name, LUNATIK_NAME_MAXSIZE);
 
 	pr_debug("creating state: %.*s maxalloc: %zd\n", namelen, name,
 		maxalloc);
