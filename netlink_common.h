@@ -26,7 +26,7 @@ extern struct genl_family lunatik_family;
 #include <net/genetlink.h>
 #endif /* _KERNEL */
 
-#define LUNATIK_FRAGMENT_SIZE	(10) /* TODO Find, a more precise size */
+#define LUNATIK_FRAGMENT_SIZE	(3000) /* TODO Find, a more precise size */
 #define DELIMITER	(3) /* How many delimiters will be necessary in each part of the message */
 #define LUNATIK_MAX_SCRIPT_SIZE	(64000)
 

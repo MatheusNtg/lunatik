@@ -272,21 +272,24 @@ error:
 	return 0;
 }
 
-static int init_codebuffer(lunatik_State *s, struct genl_info *info)
+static int init_codebuffer(lunatik_State *s, struct scp_packet *packet)
 {
-	int code_size;
-
-	if (s->code_buffer != NULL) // Code buffer is already initialized
+	if (s->code_buffer != NULL || s->buffer_offset != 0) // Code buffer is already initialized
 		return -1;
+
+	if ((s->code_buffer = kmalloc(packet->header->script_size + 1, GFP_KERNEL)) == NULL)
+		return -1;
+
+	s->buffer_offset = 0;
+	s->scriptsize = packet->header->script_size;
 
 	return 0;
 }
 
-static void add_fragtostate(char *fragment, lunatik_State *s)
+static void add_payload_to_buffer(lunatik_State *state, struct scp_packet *packet)
 {
-	strncpy(s->code_buffer + (s->buffer_offset * LUNATIK_FRAGMENT_SIZE),
-					fragment, LUNATIK_FRAGMENT_SIZE);
-	s->buffer_offset++;
+	memcpy(state->code_buffer + state->buffer_offset, packet->payload->payload, packet->header->payload_size);
+	state->buffer_offset += packet->header->payload_size;
 }
 
 static void debug_code(char *code)
@@ -308,10 +311,20 @@ static void debug_code(char *code)
 	pr_info("\\0\n");
 }
 
+static void free_code_buffer(lunatik_State *state)
+{
+	kfree(state->code_buffer);
+	state->scriptsize = 0;
+	state->buffer_offset = 0;
+	state->code_buffer = NULL;
+}
+
 static int dostring(lunatik_State *s)
 {
 	int err = 0;
 	int base;
+
+	s->code_buffer[s->scriptsize] = '\0';
 
 	if (!lunatik_getstate(s)) {
 		pr_err("Failed to get state\n");
@@ -330,9 +343,7 @@ static int dostring(lunatik_State *s)
 	lua_settop(s->L, base);
 
 out:
-	kfree(s->code_buffer);
-	s->code_buffer = NULL;
-	s->buffer_offset = 0;
+	free_code_buffer(s);
 	return err;
 }
 
@@ -365,18 +376,26 @@ static int reassemble_packet(struct scp_packet *packet, struct genl_info *info)
 	type	     = *((enum scp_packet_type *)nla_data(info->attrs[SCP_PACKET_TYPE]));
 	payload_size = *((int *)nla_data(info->attrs[PAYLOAD_SIZE]));
 	script_size = *((int*)nla_data(info->attrs[SCRIPT_SIZE]));
-	
+
 	if (payload_size != 0)
-		payload = NULL; // TODO Colocar o código aqui (não estou enviando ainda)
+		payload = nla_data(info->attrs[CODE]);
 	else
 		payload = NULL;
-	
 
 	strncpy(packet->header->state_name, nla_data(info->attrs[STATE_NAME]), LUNATIK_NAME_MAXSIZE);
 	packet->header->type = type;
 	packet->header->payload_size = payload_size;
 	packet->header->script_size = script_size;
-	packet->payload->payload = payload;
+
+	if ((packet->payload->payload = kmalloc(packet->header->payload_size + 1, GFP_KERNEL)) == NULL) {
+		pr_info("Failed to alocate memory to scp_packet_payload\n");
+		kfree(packet->header);
+		kfree(packet->payload);
+		return -1;
+	}
+
+	strncpy(packet->payload->payload, payload, packet->header->payload_size);
+	packet->payload->payload[packet->header->payload_size] = '\0';
 
 	return 0;
 }
@@ -390,10 +409,10 @@ static struct scp_packet *init_scp_packet(void)
 	packet = kmalloc(sizeof(struct scp_packet), GFP_KERNEL);
 	header = kmalloc(sizeof(struct scp_header), GFP_KERNEL);
 	payload = kmalloc(sizeof(struct scp_payload), GFP_KERNEL);
-	
+
 	if ((packet == NULL) || (header == NULL) || (payload == NULL))
 		return NULL;
-	
+
 	packet->header = header;
 	packet->payload = payload;
 
@@ -408,6 +427,7 @@ static void free_scp_packet(struct scp_packet *packet)
 	kfree(packet);
 }
 
+#ifdef DEBUG
 static void print_scp_packet(struct scp_packet *packet)
 {
 	pr_info("\n*******HEADER*******\n"
@@ -423,42 +443,59 @@ static void print_scp_packet(struct scp_packet *packet)
 		packet->header->script_size,
 		packet->payload->payload);
 }
+#endif
 
 static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 {
 	lunatik_State *state;
 	struct scp_packet *packet;
-	
+
 	if ((packet = init_scp_packet()) == NULL) {
 		pr_info("Failed to initialize scp_packet on kernel\n");
 		goto error;
 	}
-	
+
 	if (reassemble_packet(packet, info)) {
 		pr_info("Failed to reasseamble the scp_packet\n");
 		free_scp_packet(packet);
 		goto error;
 	}
 
+#ifdef DEBUG
 	print_scp_packet(packet);
+#endif
 
-	// pr_debug("Received a frag_type of %s for state %s\n", get_scp_pack_type(*type), state_name);
+	if ((state = lunatik_netstatelookup(packet->header->state_name, genl_info_net(info))) == NULL) {
+		pr_info("State %s not found\n", packet->header->state_name);
+		//TODO Reply with an error
+		return 0;
+	}
 
-	// if ((state = lunatik_netstatelookup(state_name, genl_info_net(info))) == NULL) {
-	// 	pr_info("State %s not found\n", state_name);
-	// 	//TODO Reply with an error
-	// 	return 0;
-	// }
+	switch (packet->header->type)
+	{
+	case INIT:
+		if (init_codebuffer(state, packet)) {
+			free_scp_packet(packet);
+			// TODO Reply with an error
+			return 0;
+		}
+		break;
+	case PAYLOAD:
+		add_payload_to_buffer(state, packet);
+		break;
+	case DONE:
+		if (dostring(state)) {
+			free_scp_packet(packet);
+			// TODO Reply with an error
+			return 0;
+		}
 
-	// switch (*type)
-	// {
-	// case INIT:
-	// 	init_codebuffer(state, info);
-	// 	break;
-	
-	// default:
-	// 	break;
-	// }
+		free_code_buffer(state);
+		break;
+	default:
+		pr_err("Unknow scp_packet type\n");
+		break;
+	}
 
 	free_scp_packet(packet);
 
@@ -629,9 +666,7 @@ static int handle_data(lua_State *L);
 static int lunatikN_data(struct sk_buff *buff, struct genl_info *info)
 {
 
-	pr_info("Estou simulando a execução de um recebimento de dado\n");
-
-#ifndef LUNATIK_UNUSED
+	// pr_info("Estou simulando a execução de um recebimento de dado\n");
 	lunatik_State *state;
 	char *payload;
 	char *state_name;
@@ -666,7 +701,6 @@ static int lunatikN_data(struct sk_buff *buff, struct genl_info *info)
 		pr_err("%s\n", lua_tostring(state->L, -1));
 		err = -1;
 	}
-	pr_info("Estou simulando a execução do handle_data\n");
 
 unlock:
 	spin_unlock_bh(&state->lock);
@@ -680,9 +714,6 @@ unlock:
 
 error:
 	reply_with(OP_ERROR, DATA, info);
-	return 0;
-#endif
-	reply_with(OP_SUCESS, DATA, info);
 	return 0;
 }
 

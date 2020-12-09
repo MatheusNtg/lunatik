@@ -17,6 +17,6 @@ local s1 = session:newstate's1'
 
 local err = s1:dostring(kscript)
 
-print(err)
+s1:send(buffer)
 
 s1:close()

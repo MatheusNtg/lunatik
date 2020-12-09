@@ -88,8 +88,8 @@ static int send_scp_packet(struct lunatik_nl_state *state, struct scp_packet pac
 
 	if (packet.header->script_size != 0)
 		NLA_PUT_U32(msg, SCRIPT_SIZE, packet.header->script_size);
-	
-	if (packet.payload != NULL)
+
+	if (packet.header->payload_size != 0 && packet.payload != NULL && packet.payload->payload != NULL)
 		NLA_PUT_STRING(msg, CODE, packet.payload->payload);
 
 	if ((err = nl_send_auto(state->control_sock, msg)) < 0) {
@@ -251,6 +251,11 @@ int lunatik_dostring(struct lunatik_nl_state *state,
 	if ((header = malloc(sizeof(struct scp_header))) == NULL)
 		return err;
 
+	if ((payload = malloc(sizeof(struct scp_payload))) == NULL) {
+		free(header);
+		return err;
+	}
+
 	strncpy(header->state_name, state->name, LUNATIK_NAME_MAXSIZE);
 	header->type = INIT;
 	header->payload_size = 0;
@@ -259,29 +264,48 @@ int lunatik_dostring(struct lunatik_nl_state *state,
 	packet.header = header;
 	packet.payload = NULL;
 
-	if ((err = send_scp_packet(state, packet)))
+	if ((err = send_scp_packet(state, packet))) {
+		free(header);
+		free(payload);
 		return err;
+	}
 
 	remaining_bytes = total_code_size;
 
 	while(remaining_bytes > 0) {
 		bytes_to_send = LUNATIK_FRAGMENT_SIZE < remaining_bytes ? LUNATIK_FRAGMENT_SIZE : remaining_bytes;
-		printf("Bytes a serem enviados %d\n", bytes_to_send);
-		
+
 		header->type = PAYLOAD;
 		header->payload_size = bytes_to_send;
 
-		// if ((frag.payload = malloc(bytes_to_send)) == NULL)
-		// 	send_control_scp_packet(state, ERROR_FRAG);
+		if ((payload->payload = malloc(bytes_to_send + 1)) == NULL) {
+			free(header);
+			free(payload);
+			//send_control_scp_packet(state, ERROR_FRAG);
+			return err;
+		}
 
-		// memcpy(frag.payload, script + offset, bytes_to_send);
+		strncpy(payload->payload, script + offset, bytes_to_send);
+		payload->payload[bytes_to_send] = '\0';
+
+		packet.header = header;
+		packet.payload = payload;
+
+		if ((err = send_scp_packet(state, packet))) {
+			free(payload->payload);
+			free(payload);
+			free(header);
+			// send_control_scp_packet(state, ERROR_FRAG);
+			return err;
+		}
+
 		offset += bytes_to_send;
 		remaining_bytes -= bytes_to_send;
-
-		if (send_scp_packet(state, packet));
-			// send_control_scp_packet(state, ERROR_FRAG);
-		// free(frag.payload);
+		free(payload->payload);
 	}
+
+	free(payload);
+	payload = NULL;
 
 	header->type = DONE;
 	header->payload_size = 0;
