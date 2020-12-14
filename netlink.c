@@ -470,8 +470,7 @@ static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 
 	if ((state = lunatik_netstatelookup(packet->header->state_name, genl_info_net(info))) == NULL) {
 		pr_info("State %s not found\n", packet->header->state_name);
-		//TODO Reply with an error
-		return 0;
+		goto error;
 	}
 
 	switch (packet->header->type)
@@ -479,8 +478,7 @@ static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 	case INIT:
 		if (init_codebuffer(state, packet)) {
 			free_scp_packet(packet);
-			// TODO Reply with an error
-			return 0;
+			goto error;
 		}
 		break;
 	case PAYLOAD:
@@ -489,11 +487,15 @@ static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 	case DONE:
 		if (dostring(state)) {
 			free_scp_packet(packet);
-			// TODO Reply with an error
-			return 0;
+			goto error;
 		}
 
 		free_code_buffer(state);
+		break;
+	case ERROR:
+		free_scp_packet(packet);
+		free_code_buffer(state);
+		goto error;
 		break;
 	default:
 		pr_err("Unknow scp_packet type\n");
@@ -502,10 +504,11 @@ static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info)
 
 	free_scp_packet(packet);
 
+	reply_with(OP_SUCESS, DO_STRING, info);
 	return 0;
 
 error:
-	// TODO Reply with an error to user space
+	reply_with(OP_ERROR, DO_STRING, info);
 	return 0;
 }
 

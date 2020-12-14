@@ -73,6 +73,8 @@ error:
 	return err;
 }
 
+static int receive_state_op_result(struct lunatik_nl_state *state);
+
 static int send_scp_packet(struct lunatik_nl_state *state, struct scp_packet packet)
 {
 	struct nl_msg *msg;
@@ -98,11 +100,11 @@ static int send_scp_packet(struct lunatik_nl_state *state, struct scp_packet pac
 		return err;
 	}
 
-	nl_wait_for_ack(state->control_sock);
+	err = receive_state_op_result(state);
 
 	nlmsg_free(msg);
 
-	return 0;
+	return err;
 
 nla_put_failure:
 	printf("Failed putting attributes on the message\n");
@@ -272,23 +274,30 @@ int lunatik_dostring(struct lunatik_nl_state *state,
 		header->payload_size = bytes_to_send;
 
 		if ((packet.payload = malloc(bytes_to_send + 1)) == NULL) {
+			packet.header->type = ERROR;
+			packet.header->payload_size = 0;
+			send_scp_packet(state, packet);
+
 			free(header);
 			free(packet.payload);
 			packet.header = NULL;
 			packet.payload = NULL;
-			//send_control_scp_packet(state, ERROR_FRAG);
+			err = -1;
 			return err;
 		}
 
 		strncpy(packet.payload, script + offset, bytes_to_send);
 		packet.payload[bytes_to_send] = '\0';
 
+		/*
+		TODO: How to handle with the case where the user space can't send the
+		packet to kernel?
+		*/
 		if ((err = send_scp_packet(state, packet))) {
 			free(packet.payload);
 			free(header);
 			packet.header = NULL;
 			packet.payload = NULL;
-			// send_control_scp_packet(state, ERROR_FRAG);
 			return err;
 		}
 
