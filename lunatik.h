@@ -41,6 +41,7 @@ typedef struct lunatik_state {
 	struct lunatik_instance *instance;
 	struct genl_info usr_state_info;
 	struct lunatik_data data;
+	struct net *namespace;
 	lua_State *L;
 	char *code_buffer;
 	int buffer_offset;
@@ -52,6 +53,11 @@ typedef struct lunatik_state {
 	bool inuse;
 	unsigned char name[LUNATIK_NAME_MAXSIZE];
 } lunatik_State;
+
+static inline struct net *lunatik_get_namespace(lunatik_State *state)
+{
+	return state->namespace;
+}
 
 lunatik_State *lunatik_newstate(const char *name, size_t maxalloc);
 int lunatik_close(const char *name);

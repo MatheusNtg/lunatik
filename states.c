@@ -246,6 +246,7 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 	refcount_inc(&(s->users));
 	atomic_inc(&(instance->states_count));
 	s->instance = instance;
+	s->namespace = net;
 	spin_unlock_bh(&(instance->statestable_lock));
 
 	pr_debug("new state created: %.*s\n", namelen, name);
