@@ -288,7 +288,7 @@ static int init_codebuffer(lunatik_State *s, struct scp_packet *packet)
 
 static void add_payload_to_buffer(lunatik_State *state, struct scp_packet *packet)
 {
-	memcpy(state->code_buffer + state->buffer_offset, packet->payload->payload, packet->header->payload_size);
+	memcpy(state->code_buffer + state->buffer_offset, packet->payload, packet->header->payload_size);
 	state->buffer_offset += packet->header->payload_size;
 }
 
@@ -366,36 +366,31 @@ static int reassemble_packet(struct scp_packet *packet, struct genl_info *info)
 	enum scp_packet_type type;
 	size_t payload_size;
 	size_t script_size;
-	/*Payload Content*/
-	char *payload;
 
-	if (packet == NULL || packet->header == NULL || packet->payload == NULL)
+	if (packet == NULL || packet->header == NULL)
 		return -1;
 
 	state_name   = nla_data(info->attrs[STATE_NAME]);
 	type	     = *((enum scp_packet_type *)nla_data(info->attrs[SCP_PACKET_TYPE]));
 	payload_size = *((int *)nla_data(info->attrs[PAYLOAD_SIZE]));
-	script_size = *((int*)nla_data(info->attrs[SCRIPT_SIZE]));
+	script_size  = *((int*)nla_data(info->attrs[SCRIPT_SIZE]));
 
-	if (payload_size != 0)
-		payload = nla_data(info->attrs[CODE]);
-	else
-		payload = NULL;
+	if (payload_size != 0) {
+		packet->payload = kmalloc(payload_size + 1, GFP_KERNEL);
+
+		if (packet->payload == NULL)
+			return -1;
+
+		memcpy(packet->payload, nla_data(info->attrs[CODE]), payload_size);
+		packet->payload[payload_size] = '\0';
+	} else {
+		packet->payload = NULL;
+	}
 
 	strncpy(packet->header->state_name, nla_data(info->attrs[STATE_NAME]), LUNATIK_NAME_MAXSIZE);
 	packet->header->type = type;
 	packet->header->payload_size = payload_size;
 	packet->header->script_size = script_size;
-
-	if ((packet->payload->payload = kmalloc(packet->header->payload_size + 1, GFP_KERNEL)) == NULL) {
-		pr_info("Failed to alocate memory to scp_packet_payload\n");
-		kfree(packet->header);
-		kfree(packet->payload);
-		return -1;
-	}
-
-	strncpy(packet->payload->payload, payload, packet->header->payload_size);
-	packet->payload->payload[packet->header->payload_size] = '\0';
 
 	return 0;
 }
@@ -404,17 +399,22 @@ static struct scp_packet *init_scp_packet(void)
 {
 	struct scp_packet *packet;
 	struct scp_header *header;
-	struct scp_payload *payload;
 
 	packet = kmalloc(sizeof(struct scp_packet), GFP_KERNEL);
-	header = kmalloc(sizeof(struct scp_header), GFP_KERNEL);
-	payload = kmalloc(sizeof(struct scp_payload), GFP_KERNEL);
 
-	if ((packet == NULL) || (header == NULL) || (payload == NULL))
+	if (packet == NULL)
 		return NULL;
 
+	header = kmalloc(sizeof(struct scp_header), GFP_KERNEL);
+
+	if (header == NULL) {
+		kfree(packet);
+		packet = NULL;
+		return NULL;
+	}
+
 	packet->header = header;
-	packet->payload = payload;
+	packet->payload = NULL;
 
 	return packet;
 }
@@ -422,9 +422,12 @@ static struct scp_packet *init_scp_packet(void)
 static void free_scp_packet(struct scp_packet *packet)
 {
 	kfree(packet->header);
-	kfree(packet->payload->payload);
 	kfree(packet->payload);
+	packet->header = NULL;
+	packet->payload = NULL;
+
 	kfree(packet);
+	packet = NULL;
 }
 
 #ifdef DEBUG
@@ -441,7 +444,7 @@ static void print_scp_packet(struct scp_packet *packet)
 		get_scp_pack_type(packet->header->type),
 		packet->header->payload_size,
 		packet->header->script_size,
-		packet->payload->payload);
+		packet->payload);
 }
 #endif
 

@@ -89,8 +89,8 @@ static int send_scp_packet(struct lunatik_nl_state *state, struct scp_packet pac
 	if (packet.header->script_size != 0)
 		NLA_PUT_U32(msg, SCRIPT_SIZE, packet.header->script_size);
 
-	if (packet.header->payload_size != 0 && packet.payload != NULL && packet.payload->payload != NULL)
-		NLA_PUT_STRING(msg, CODE, packet.payload->payload);
+	if (packet.header->payload_size != 0 && packet.payload != NULL)
+		NLA_PUT_STRING(msg, CODE, packet.payload);
 
 	if ((err = nl_send_auto(state->control_sock, msg)) < 0) {
 		printf("Failed to send fragment\n %s\n", nl_geterror(err));
@@ -243,18 +243,12 @@ int lunatik_dostring(struct lunatik_nl_state *state,
 	int offset = 0;
 	struct scp_packet packet;
 	struct scp_header *header;
-	struct scp_payload *payload;
 
 	if (script == NULL)
 		return err;
 
 	if ((header = malloc(sizeof(struct scp_header))) == NULL)
 		return err;
-
-	if ((payload = malloc(sizeof(struct scp_payload))) == NULL) {
-		free(header);
-		return err;
-	}
 
 	strncpy(header->state_name, state->name, LUNATIK_NAME_MAXSIZE);
 	header->type = INIT;
@@ -266,7 +260,6 @@ int lunatik_dostring(struct lunatik_nl_state *state,
 
 	if ((err = send_scp_packet(state, packet))) {
 		free(header);
-		free(payload);
 		return err;
 	}
 
@@ -278,34 +271,32 @@ int lunatik_dostring(struct lunatik_nl_state *state,
 		header->type = PAYLOAD;
 		header->payload_size = bytes_to_send;
 
-		if ((payload->payload = malloc(bytes_to_send + 1)) == NULL) {
+		if ((packet.payload = malloc(bytes_to_send + 1)) == NULL) {
 			free(header);
-			free(payload);
+			free(packet.payload);
+			packet.header = NULL;
+			packet.payload = NULL;
 			//send_control_scp_packet(state, ERROR_FRAG);
 			return err;
 		}
 
-		strncpy(payload->payload, script + offset, bytes_to_send);
-		payload->payload[bytes_to_send] = '\0';
-
-		packet.header = header;
-		packet.payload = payload;
+		strncpy(packet.payload, script + offset, bytes_to_send);
+		packet.payload[bytes_to_send] = '\0';
 
 		if ((err = send_scp_packet(state, packet))) {
-			free(payload->payload);
-			free(payload);
+			free(packet.payload);
 			free(header);
+			packet.header = NULL;
+			packet.payload = NULL;
 			// send_control_scp_packet(state, ERROR_FRAG);
 			return err;
 		}
 
 		offset += bytes_to_send;
 		remaining_bytes -= bytes_to_send;
-		free(payload->payload);
+		free(packet.payload);
+		packet.payload = NULL;
 	}
-
-	free(payload);
-	payload = NULL;
 
 	header->type = DONE;
 	header->payload_size = 0;

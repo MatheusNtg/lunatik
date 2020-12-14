@@ -88,13 +88,9 @@ struct scp_header {
 	size_t script_size;
 };
 
-struct scp_payload {
-	char *payload;
-};
-
 struct scp_packet {
 	struct scp_header *header;
-	struct scp_payload *payload;
+	char *payload;
 };
 
 #endif /* NETLINK_COMMOM_H */
