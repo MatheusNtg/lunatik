@@ -262,8 +262,9 @@ static int lunatikN_newstate(struct sk_buff *buff, struct genl_info *info)
 	if (s->inuse)
 		goto error;
 
-	reply_with(OP_SUCESS, CREATE_STATE, info);
 	s->inuse = true;
+
+	reply_with(OP_SUCESS, CREATE_STATE, info);
 
 	return 0;
 
@@ -919,7 +920,9 @@ static int lunatikN_putstate(struct sk_buff *buff, struct genl_info *info)
 
 	lunatik_putstate(s);
 
-	s->inuse = false;
+	if (s != NULL)
+		s->inuse = false;
+
 	reply_with(OP_SUCESS, PUT_STATE, info);
 
 	return 0;

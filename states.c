@@ -164,7 +164,7 @@ void lunatik_putstate(lunatik_State *s)
 
 	hash_del_rcu(&s->node);
 	kfree(s);
-
+	s = NULL;
 unlock:
 	spin_unlock_bh(refcnt_lock);
 	return;

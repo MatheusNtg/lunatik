@@ -861,7 +861,7 @@ int lunatik_putstate(struct lunatik_nl_state *state)
 	NLA_PUT_STRING(msg, STATE_NAME, state->name);
 
 	if ((err = nl_send_auto(state->control_sock, msg)) < 0)
-		return err;	
+		return err;
 
 	return receive_state_op_result(state);
 
