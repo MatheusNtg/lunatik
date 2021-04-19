@@ -18,3 +18,11 @@ with the code compiled you can now install the compiled module with
 ```bash
 insmod lunatik.ko
 ```
+
+Uninstall
+---------
+
+To remove lunatik module just run the command
+```bash
+rmmod lunatik
+```
