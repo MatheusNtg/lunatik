@@ -36,7 +36,7 @@
 
 extern int luaopen_memory(lua_State *);
 extern int luaopen_netlink(lua_State *L);
-extern struct lunatik_instance *lunatik_pernet(struct net *net);
+extern struct lunatik_namespace *lunatik_pernet(struct net *net);
 
 static const luaL_Reg libs[] = {
 	{"memory", luaopen_memory},
@@ -58,7 +58,7 @@ inline lunatik_State *lunatik_statelookup(const char *name)
 void state_destroy(lunatik_State *s)
 {
 	hash_del_rcu(&s->node);
-	atomic_dec(&(s->instance->states_count));
+	atomic_dec(&(s->lunatik_namespace->states_count));
 
 	spin_lock_bh(&s->lock);
 	if (s->L != NULL) {
@@ -127,18 +127,18 @@ inline int lunatik_close(const char *name)
 
 void lunatik_closeall_from_default_ns(void)
 {
-	struct lunatik_instance *instance;
+	struct lunatik_namespace *lunatik_namespace;
 	struct hlist_node *tmp;
 	lunatik_State *s;
 	int bkt;
 
-	instance = lunatik_pernet(LUNATIK_DEFAULT_NS);
+	lunatik_namespace = lunatik_pernet(LUNATIK_DEFAULT_NS);
 
-	spin_lock_bh(&(instance->statestable_lock));
-	hash_for_each_safe (instance->states_table, bkt, tmp, s, node) {
+	spin_lock_bh(&(lunatik_namespace->statestable_lock));
+	hash_for_each_safe (lunatik_namespace->states_table, bkt, tmp, s, node) {
 		state_destroy(s);
 	}
-	spin_unlock_bh(&(instance->statestable_lock));
+	spin_unlock_bh(&(lunatik_namespace->statestable_lock));
 }
 
 // TODO Is the refcount_inc_not_zero function atomic?
@@ -150,7 +150,7 @@ inline bool lunatik_getstate(lunatik_State *s)
 void lunatik_putstate(lunatik_State *s)
 {
 	refcount_t *users = &s->users;
-	spinlock_t *refcnt_lock = &(s->instance->rfcnt_lock);
+	spinlock_t *refcnt_lock = &(s->lunatik_namespace->rfcnt_lock);
 
 	if (WARN_ON(s == NULL))
 		return;
@@ -179,14 +179,14 @@ unlock:
 lunatik_State *lunatik_netstatelookup(const char *name, struct net *net)
 {
 	lunatik_State *state;
-	struct lunatik_instance *instance;
+	struct lunatik_namespace *lunatik_namespace;
 	int key;
 
-	instance = lunatik_pernet(net);
+	lunatik_namespace = lunatik_pernet(net);
 
-	key = name_hash(instance, name);
+	key = name_hash(lunatik_namespace, name);
 
-	hash_for_each_possible_rcu(instance->states_table, state, node, key) {
+	hash_for_each_possible_rcu(lunatik_namespace->states_table, state, node, key) {
 		if (!strncmp(state->name, name, LUNATIK_NAME_MAXSIZE))
 			return state;
 	}
@@ -196,10 +196,10 @@ lunatik_State *lunatik_netstatelookup(const char *name, struct net *net)
 lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net *net)
 {
 	lunatik_State *s = lunatik_netstatelookup(name, net);
-	struct lunatik_instance *instance;
+	struct lunatik_namespace *lunatik_namespace;
 	int namelen;
 
-	instance = lunatik_pernet(net);
+	lunatik_namespace = lunatik_pernet(net);
 
 	namelen = strnlen(name, LUNATIK_NAME_MAXSIZE);
 
@@ -211,7 +211,7 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 		return NULL;
 	}
 
-	if (atomic_read(&(instance->states_count)) >= LUNATIK_HASH_BUCKETS) {
+	if (atomic_read(&(lunatik_namespace->states_count)) >= LUNATIK_HASH_BUCKETS) {
 		pr_err("could not allocate id for state %.*s\n", namelen, name);
 		pr_err("max states limit reached or out of memory\n");
 		return NULL;
@@ -239,13 +239,13 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 		return NULL;
 	}
 
-	spin_lock_bh(&(instance->statestable_lock));
-	hash_add_rcu(instance->states_table, &(s->node), name_hash(instance, name));
+	spin_lock_bh(&(lunatik_namespace->statestable_lock));
+	hash_add_rcu(lunatik_namespace->states_table, &(s->node), name_hash(lunatik_namespace, name));
 	refcount_inc(&(s->users));
-	atomic_inc(&(instance->states_count));
-	s->instance = instance;
+	atomic_inc(&(lunatik_namespace->states_count));
+	s->lunatik_namespace = lunatik_namespace;
 	s->namespace = net;
-	spin_unlock_bh(&(instance->statestable_lock));
+	spin_unlock_bh(&(lunatik_namespace->statestable_lock));
 
 	pr_debug("new state created: %.*s\n", namelen, name);
 	return s;
@@ -254,17 +254,17 @@ lunatik_State *lunatik_netnewstate(const char *name, size_t maxalloc, struct net
 int lunatik_netclosestate(const char *name, struct net *net)
 {
 	lunatik_State *s = lunatik_netstatelookup(name, net);
-	struct lunatik_instance *instance;
+	struct lunatik_namespace *lunatik_namespace;
 
-	instance = lunatik_pernet(net);
+	lunatik_namespace = lunatik_pernet(net);
 
 	if (s == NULL || refcount_read(&s->users) > 1)
 		return -1;
 
-	spin_lock_bh(&(instance->statestable_lock));
+	spin_lock_bh(&(lunatik_namespace->statestable_lock));
 
 	hash_del_rcu(&s->node);
-	atomic_dec(&(instance->states_count));
+	atomic_dec(&(lunatik_namespace->states_count));
 
 	spin_lock_bh(&s->lock);
 	if (s->L != NULL) {
@@ -274,7 +274,7 @@ int lunatik_netclosestate(const char *name, struct net *net)
 	spin_unlock_bh(&s->lock);
 	lunatik_putstate(s);
 
-	spin_unlock_bh(&(instance->statestable_lock));
+	spin_unlock_bh(&(lunatik_namespace->statestable_lock));
 
 	return 0;
 }

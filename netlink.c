@@ -41,7 +41,7 @@ struct lunatik_nl_state {
 	size_t curralloc;
 };
 
-extern struct lunatik_instance *lunatik_pernet(struct net *net);
+extern struct lunatik_namespace *lunatik_pernet(struct net *net);
 
 static int lunatikN_newstate(struct sk_buff *buff, struct genl_info *info);
 static int lunatikN_dostring(struct sk_buff *buff, struct genl_info *info);
@@ -150,14 +150,14 @@ struct genl_family lunatik_family = {
 	.parallel_ops = false,
 };
 
-static void fill_states_list(char *buffer, struct lunatik_instance *instance)
+static void fill_states_list(char *buffer, struct lunatik_namespace *lunatik_namespace)
 {
 	struct lunatik_state *state;
 	int bucket;
 	int counter = 0;
-	int states_count = atomic_read(&instance->states_count);
+	int states_count = atomic_read(&lunatik_namespace->states_count);
 
-	hash_for_each_rcu(instance->states_table, bucket, state, node) {
+	hash_for_each_rcu(lunatik_namespace->states_table, bucket, state, node) {
 		buffer += sprintf(buffer, "%s#", state->name);
 		buffer += sprintf(buffer, "%ld#", state->curralloc);
 		if (counter == states_count - 1)
@@ -243,14 +243,14 @@ static void send_states_list(char *buffer, int flags, struct genl_info *info)
 
 static int lunatikN_newstate(struct sk_buff *buff, struct genl_info *info)
 {
-	struct lunatik_instance *instance;
+	struct lunatik_namespace *lunatik_namespace;
 	struct lunatik_state *s;
 	char *state_name;
 	u32 *max_alloc;
 
 	pr_debug("Received a CREATE_STATE message\n");
 
-	instance = lunatik_pernet(genl_info_net(info));
+	lunatik_namespace = lunatik_pernet(genl_info_net(info));
 	state_name = (char *)nla_data(info->attrs[STATE_NAME]);
 	max_alloc = (u32 *)nla_data(info->attrs[MAX_ALLOC]);
 
@@ -564,9 +564,9 @@ static void send_init_information(int parts, int states_count, struct genl_info 
 	pr_debug("Message sent to user space\n");
 }
 
-static int init_replybuffer(struct lunatik_instance *instance, size_t size)
+static int init_replybuffer(struct lunatik_namespace *lunatik_namespace, size_t size)
 {
-	struct reply_buffer *reply_buffer = &instance->reply_buffer;
+	struct reply_buffer *reply_buffer = &lunatik_namespace->reply_buffer;
 	reply_buffer->buffer = kmalloc(size * (sizeof(struct lunatik_nl_state) + DELIMITER), GFP_KERNEL);
 
 	if (reply_buffer->buffer == NULL) {
@@ -574,7 +574,7 @@ static int init_replybuffer(struct lunatik_instance *instance, size_t size)
 		return -1;
 	}
 
-	fill_states_list(reply_buffer->buffer, instance);
+	fill_states_list(reply_buffer->buffer, lunatik_namespace);
 	reply_buffer->curr_pos_to_send = 0;
 
 	reply_buffer->parts = ((strlen(reply_buffer->buffer) % LUNATIK_FRAGMENT_SIZE) == 0) ?
@@ -599,7 +599,7 @@ static void send_fragment(char *fragment, struct reply_buffer *reply_buffer, str
 
 static int lunatikN_list(struct sk_buff *buff, struct genl_info *info)
 {
-	struct lunatik_instance *instance;
+	struct lunatik_namespace *lunatik_namespace;
 	struct reply_buffer *reply_buffer;
 	int states_count;
 	char *fragment;
@@ -608,10 +608,10 @@ static int lunatikN_list(struct sk_buff *buff, struct genl_info *info)
 
 	pr_debug("Received a LIST_STATES command\n");
 
-	instance = lunatik_pernet(genl_info_net(info));
+	lunatik_namespace = lunatik_pernet(genl_info_net(info));
 	flags = *((u8 *)nla_data(info->attrs[FLAGS]));
-	states_count = atomic_read(&instance->states_count);
-	reply_buffer = &instance->reply_buffer;
+	states_count = atomic_read(&lunatik_namespace->states_count);
+	reply_buffer = &lunatik_namespace->reply_buffer;
 
 	if ((fragment = kmalloc(LUNATIK_FRAGMENT_SIZE, GFP_KERNEL)) == NULL) {
 		pr_err("Failed to allocate memory to fragment\n");
@@ -624,7 +624,7 @@ static int lunatikN_list(struct sk_buff *buff, struct genl_info *info)
 	}
 
 	if (reply_buffer->status == RB_INIT) {
-		err = init_replybuffer(instance, states_count);
+		err = init_replybuffer(lunatik_namespace, states_count);
 		if (err)
 			reply_with(OP_ERROR, LIST_STATES, info);
 		else

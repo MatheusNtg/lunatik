@@ -27,7 +27,7 @@
 #include "netlink.h"
 #include "luautil.h"
 
-struct lunatik_instance {
+struct lunatik_namespace {
 	DECLARE_HASHTABLE(states_table, ilog2(LUNATIK_HASH_BUCKETS));
 	struct reply_buffer reply_buffer;
 	spinlock_t statestable_lock;
@@ -38,7 +38,7 @@ struct lunatik_instance {
 
 typedef struct lunatik_state {
 	struct hlist_node node;
-	struct lunatik_instance *instance;
+	struct lunatik_namespace *lunatik_namespace;
 	struct genl_info usr_state_info;
 	struct lunatik_data data;
 	struct net *namespace;

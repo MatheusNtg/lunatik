@@ -191,47 +191,47 @@ extern void state_destroy(lunatik_State *s);
 
 static int lunatik_netid __read_mostly;
 
-struct lunatik_instance *lunatik_pernet(struct net *net)
+struct lunatik_namespace *lunatik_pernet(struct net *net)
 {
-	return (struct lunatik_instance *)net_generic(net,lunatik_netid);
+	return (struct lunatik_namespace *)net_generic(net, lunatik_netid);
 }
 
-static int __net_init lunatik_instancenew(struct net *net)
+static int __net_init lunatik_newnamespace(struct net *net)
 {
-	struct lunatik_instance *instance = lunatik_pernet(net);
+	struct lunatik_namespace *lunatik_namespace = lunatik_pernet(net);
 
-	atomic_set(&(instance->states_count), 0);
-	spin_lock_init(&(instance->statestable_lock));
-	spin_lock_init(&(instance->rfcnt_lock));
-	hash_init(instance->states_table);
-	(instance->reply_buffer).status = RB_INIT;
+	atomic_set(&(lunatik_namespace->states_count), 0);
+	spin_lock_init(&(lunatik_namespace->statestable_lock));
+	spin_lock_init(&(lunatik_namespace->rfcnt_lock));
+	hash_init(lunatik_namespace->states_table);
+	(lunatik_namespace->reply_buffer).status = RB_INIT;
 	return 0;
 }
 
-static void __net_exit lunatik_instanceclose(struct net *net)
+static void __net_exit lunatik_closenamespace(struct net *net)
 {
-	struct lunatik_instance *instance;
+	struct lunatik_namespace *lunatik_namespace;
 	lunatik_State *s;
 	int bkt;
 
-	instance = lunatik_pernet(net);
+	lunatik_namespace = lunatik_pernet(net);
 
-	spin_lock_bh(&(instance->statestable_lock));
+	spin_lock_bh(&(lunatik_namespace->statestable_lock));
 
-	hash_for_each(instance->states_table, bkt, s, node) {
+	hash_for_each(lunatik_namespace->states_table, bkt, s, node) {
 		state_destroy(s);
-		if (hash_empty(instance->states_table))
+		if (hash_empty(lunatik_namespace->states_table))
 			break;
 	}
 
-	spin_unlock_bh(&(instance->statestable_lock));
+	spin_unlock_bh(&(lunatik_namespace->statestable_lock));
 }
 
 static struct pernet_operations lunatik_net_ops = {
-	.init = lunatik_instancenew,
-	.exit = lunatik_instanceclose,
+	.init = lunatik_newnamespace,
+	.exit = lunatik_closenamespace,
 	.id   = &lunatik_netid,
-	.size = sizeof(struct lunatik_instance),
+	.size = sizeof(struct lunatik_namespace),
 };
 
 static int __init modinit(void)
