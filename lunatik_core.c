@@ -196,15 +196,41 @@ struct lunatik_namespace *lunatik_pernet(struct net *net)
 	return (struct lunatik_namespace *)net_generic(net, lunatik_netid);
 }
 
+static void *control_state_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
+{
+	struct lunatik_controlstate *control_state = ud;
+
+	void *nptr = NULL;
+
+	osize = ptr != NULL ? osize : 0;
+
+	if (nsize == 0) {
+		control_state->curr_alloc -= osize;
+		kfree(ptr);
+	} else if (control_state->curr_alloc - osize + nsize > LUNATIK_MAX_ALLOC_CONTROL_STATE) {
+		pr_warn_ratelimited("maxalloc limit %zu reached on control state\n", LUNATIK_MAX_ALLOC_CONTROL_STATE);
+	} else if ((nptr = krealloc(ptr, nsize, GFP_ATOMIC)) != NULL) {
+		control_state->curr_alloc += nsize - osize;
+	}
+
+	return nptr;
+}
+
 static int __net_init lunatik_newnamespace(struct net *net)
 {
 	struct lunatik_namespace *lunatik_namespace = lunatik_pernet(net);
+	struct lunatik_controlstate *control_state = &(lunatik_namespace->control_state);
 
 	atomic_set(&(lunatik_namespace->states_count), 0);
 	spin_lock_init(&(lunatik_namespace->statestable_lock));
 	spin_lock_init(&(lunatik_namespace->rfcnt_lock));
 	hash_init(lunatik_namespace->states_table);
 	(lunatik_namespace->reply_buffer).status = RB_INIT;
+	
+	control_state->state 	  = lua_newstate(control_state_alloc, control_state);
+	control_state->max_alloc  = LUNATIK_MAX_ALLOC_CONTROL_STATE;
+	control_state->curr_alloc = 0;
+	
 	return 0;
 }
 
@@ -223,6 +249,8 @@ static void __net_exit lunatik_closenamespace(struct net *net)
 		if (hash_empty(lunatik_namespace->states_table))
 			break;
 	}
+
+	lua_close(lunatik_namespace->control_state.state);
 
 	spin_unlock_bh(&(lunatik_namespace->statestable_lock));
 }

@@ -27,9 +27,16 @@
 #include "netlink.h"
 #include "luautil.h"
 
+struct lunatik_controlstate {
+	lua_State *state;
+	size_t max_alloc;
+	size_t curr_alloc;
+};
+
 struct lunatik_namespace {
 	DECLARE_HASHTABLE(states_table, ilog2(LUNATIK_HASH_BUCKETS));
 	struct reply_buffer reply_buffer;
+	struct lunatik_controlstate control_state;
 	spinlock_t statestable_lock;
 	spinlock_t rfcnt_lock;
 	spinlock_t sendmessage_lock;

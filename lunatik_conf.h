@@ -30,4 +30,6 @@
 
 #define LUNATIK_HASH_BUCKETS	(32)
 
+#define LUNATIK_MAX_ALLOC_CONTROL_STATE		(32 * 1024UL) /* Maximum amount of memory allocated by the control state */
+
 #endif /* LUNATIK_CONF_H */
