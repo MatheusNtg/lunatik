@@ -52,12 +52,14 @@ static int lunatikN_datainit(struct sk_buff *buff, struct genl_info *info);
 static int lunatikN_sendstate(struct sk_buff *buff, struct genl_info *info);
 static int lunatikN_getcurralloc(struct sk_buff *buff, struct genl_info *info);
 static int lunatikN_putstate(struct sk_buff *buff, struct genl_info *info);
+static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info);
 
 struct nla_policy lunatik_policy[ATTRS_COUNT] = {
 	[STATE_NAME]  = { .type = NLA_STRING },
 	[CODE]	      = { .type = NLA_STRING },
 	[STATES_LIST] = { .type = NLA_STRING },
 	[LUNATIK_DATA]= { .type = NLA_STRING },
+	[MSG_PAYLOAD] = { .type = NLA_STRING },
 	[LUNATIK_DATA_LEN] = { .type = NLA_U32},
 	[PAYLOAD_SIZE] = { .type = NLA_U32 },
 	[MAX_ALLOC]   = { .type = NLA_U32 },
@@ -65,7 +67,7 @@ struct nla_policy lunatik_policy[ATTRS_COUNT] = {
 	[SCRIPT_SIZE] = { .type = NLA_U32 },
 	[OP_SUCESS]   = { .type = NLA_U8 },
 	[OP_ERROR]    = { .type = NLA_U8 },
-	[SCP_PACKET_TYPE]   = { .type = NLA_U8 }
+	[SCP_PACKET_TYPE]   = { .type = NLA_U8 },
 };
 
 static const struct genl_ops l_ops[] = {
@@ -132,8 +134,14 @@ static const struct genl_ops l_ops[] = {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
 		.policy = lunatik_policy
 #endif
+	},
+	{
+		.cmd    = TABLE_MSG,
+		.doit   = lunatikN_handletablemsg,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,2,0)
+		.policy = lunatik_policy
+#endif
 	}
-
 };
 
 struct genl_family lunatik_family = {
@@ -926,6 +934,15 @@ static int lunatikN_putstate(struct sk_buff *buff, struct genl_info *info)
 	reply_with(OP_SUCESS, PUT_STATE, info);
 
 	return 0;
+
+error:
+	reply_with(OP_ERROR, PUT_STATE, info);
+	return 0;
+}
+
+static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
+{
+	pr_debug("Receive a msg from user space\n");
 
 error:
 	reply_with(OP_ERROR, PUT_STATE, info);
