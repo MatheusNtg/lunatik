@@ -47,6 +47,7 @@ enum lunatik_operations {
 	GET_STATE,
 	GET_CURRALLOC,
 	PUT_STATE,
+	TABLE_MSG
 };
 
 enum lunatik_attrs {
@@ -69,6 +70,7 @@ enum lunatik_attrs {
 	CURR_ALLOC,
 	STATE_NOT_FOUND,
 	NOT_IN_USE,
+	MSG_PAYLOAD,
 	ATTRS_COUNT
 #define ATTRS_MAX	(ATTRS_COUNT - 1)
 };
