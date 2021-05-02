@@ -941,6 +941,37 @@ error:
 	return 0;
 }
 
+static int send_msg_to_userspace(char *msg, struct genl_info *info)
+{
+	struct sk_buff *obuff;
+	void *msg_head;
+
+	if ((obuff = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL)) == NULL) {
+		pr_err("Failed allocating message to an reply\n");
+		return -1;
+	}
+
+	if ((msg_head = genlmsg_put_reply(obuff, info, &lunatik_family, 0, GET_CURRALLOC)) == NULL) {
+		pr_err("Failed to put generic netlink header\n");
+		return -1;
+	}
+
+	if (nla_put_string(obuff, KERNEL_MSG, msg)) {
+		pr_err("Failed to put attributes on socket buffer\n");
+		return -1;
+	}
+
+	genlmsg_end(obuff, msg_head);
+
+	if (genlmsg_reply(obuff, info) < 0) {
+		pr_err("Failed to send message to user space\n");
+		return -1;
+	}
+
+	pr_debug("Message sent to user space\n");
+	return 0;
+}
+
 static void lstop(struct lua_State *L, struct lua_Debug *ar) {
 	luaL_error(L, "instruction limit exceeded");
 }
@@ -963,7 +994,6 @@ static int run_safe_code_on_control_state(struct lunatik_controlstate *control_s
 	return 0;
 }
 
-
 static int get_int_from_table(struct lunatik_controlstate *control_state, char *attr_name, lua_Integer *integer) 
 {
 	lua_State *L = control_state->lua_state;
@@ -983,14 +1013,36 @@ static int get_int_from_table(struct lunatik_controlstate *control_state, char *
 
 	return 0;
 }
+
 static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 {
 	pr_debug("Receive a msg from user space\n");
 
+	char *response_msg = "{"
+						 " test = 3 "
+						 "}";
+
+	struct lunatik_controlstate *control_state;
+	char *msg_payload;
+	lua_Integer op_number;
+
+	control_state = &lunatik_pernet(genl_info_net(info))->control_state;
+	msg_payload = (char *)nla_data(info->attrs[MSG_PAYLOAD]);
+
+	if (run_safe_code_on_control_state(control_state, msg_payload)) goto error;
+
+	if (get_int_from_table(control_state, "operation", &op_number)) {
+		goto error;
+	}
+
+	send_msg_to_userspace(response_msg, info);
+
+	return 0;
 error:
-	reply_with(OP_ERROR, PUT_STATE, info);
+	// TODO Implement this
 	return 0;
 }
+
 
 /* Note: Most of the function below is copied from NFLua: https://github.com/cujoai/nflua
  * Copyright (C) 2017-2019  CUJO LLC

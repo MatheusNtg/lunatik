@@ -71,6 +71,7 @@ enum lunatik_attrs {
 	STATE_NOT_FOUND,
 	NOT_IN_USE,
 	MSG_PAYLOAD,
+	KERNEL_MSG,
 	ATTRS_COUNT
 #define ATTRS_MAX	(ATTRS_COUNT - 1)
 };
