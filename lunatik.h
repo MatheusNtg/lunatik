@@ -28,7 +28,7 @@
 #include "luautil.h"
 
 struct lunatik_controlstate {
-	lua_State *state;
+	lua_State *lua_state;
 	size_t max_alloc;
 	size_t curr_alloc;
 };

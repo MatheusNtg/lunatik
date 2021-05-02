@@ -227,7 +227,7 @@ static int __net_init lunatik_newnamespace(struct net *net)
 	hash_init(lunatik_namespace->states_table);
 	(lunatik_namespace->reply_buffer).status = RB_INIT;
 	
-	control_state->state 	  = lua_newstate(control_state_alloc, control_state);
+	control_state->lua_state 	  = lua_newstate(control_state_alloc, control_state);
 	control_state->max_alloc  = LUNATIK_MAX_ALLOC_CONTROL_STATE;
 	control_state->curr_alloc = 0;
 	
@@ -250,7 +250,7 @@ static void __net_exit lunatik_closenamespace(struct net *net)
 			break;
 	}
 
-	lua_close(lunatik_namespace->control_state.state);
+	lua_close(lunatik_namespace->control_state.lua_state);
 
 	spin_unlock_bh(&(lunatik_namespace->statestable_lock));
 }
