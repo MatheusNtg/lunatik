@@ -34,6 +34,7 @@
 #include "netlink_common.h"
 
 #define DATA_RECV_FUNC	("receive_callback")
+#define MAX_INSTRUCTIONS	(10)
 
 struct lunatik_nl_state {
 	char name[LUNATIK_NAME_MAXSIZE];
@@ -940,6 +941,48 @@ error:
 	return 0;
 }
 
+static void lstop(struct lua_State *L, struct lua_Debug *ar) {
+	luaL_error(L, "instruction limit exceeded");
+}
+
+static int run_safe_code_on_control_state(struct lunatik_controlstate *control_state, char *code)
+{
+	lua_State *L = control_state->lua_state;
+	
+	if (L == NULL) return -1;
+
+	if (luaL_loadstring(L, code) != LUA_OK) return -1;
+
+	lua_sethook(L, lstop, LUA_MASKCOUNT, MAX_INSTRUCTIONS);
+
+	if (lua_pcall(L, 0, LUA_MULTRET, 0)) {
+		pr_err(KERN_INFO "Error executing code on control state");
+		return -1;
+	}
+
+	return 0;
+}
+
+
+static int get_int_from_table(struct lunatik_controlstate *control_state, char *attr_name, lua_Integer *integer) 
+{
+	lua_State *L = control_state->lua_state;
+
+	if (L == NULL) return -EPERM;
+
+	/* First get the global table named msg */
+	if(lua_getglobal(L, "msg") != LUA_TTABLE) {
+		return -EINVAL;
+	}
+
+	if(lua_getfield (L, -1, attr_name) != LUA_INT_TYPE) {
+		return -EINVAL;
+	}
+
+	*integer = lua_tointeger(L, -1);
+
+	return 0;
+}
 static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 {
 	pr_debug("Receive a msg from user space\n");
