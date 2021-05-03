@@ -148,10 +148,24 @@ static const luaL_Reg messager_lib[] = {
 	{NULL, NULL}
 };
 
+static void setconst(lua_State *L, const char *name, lua_Integer value)
+{
+	lua_pushinteger(L, value);
+	lua_setfield(L, -2, name);
+}
+
 int luaopen_lunatik_messenger(lua_State *L)
 {
-
 	luaL_newlib(L, messager_lib);
+	
+	lua_newtable(L);
+
+	setconst(L, "CREATE_STATE", CREATE_STATE);
+	setconst(L, "DO_STRING", DO_STRING);
+	setconst(L, "DESTROY_STATE", DESTROY_STATE);
+	setconst(L, "LIST_STATES",LIST_STATES);
+
+	lua_setfield(L, -2, "operations");
 
 	return 1;
 }
