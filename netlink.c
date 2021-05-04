@@ -1014,13 +1014,47 @@ static int get_int_from_table(struct lunatik_controlstate *control_state, char *
 	return 0;
 }
 
+
+static char *get_string_from_table(struct lunatik_controlstate *control_state, char *attr_name) 
+{
+	lua_State *L = control_state->lua_state;
+	size_t string_size = 0;
+	
+
+	if (L == NULL) return NULL;
+
+	/* First get the global table named msg */
+	if(lua_getglobal(L, "msg") != LUA_TTABLE) {
+		return NULL;
+	}
+
+	if(lua_getfield(L, -1, attr_name) != LUA_TSTRING) {
+		return NULL;
+	}
+
+	return lua_tostring(L, -1);
+}
+
+
+static void handle_control_state_msg(struct lunatik_controlstate *control_state, char *response)
+{
+	char *state_name;
+	lua_Integer max_alloc;
+
+	state_name = get_string_from_table(control_state, "name");
+	get_int_from_table(control_state, "maxalloc", &max_alloc);
+
+	pr_info("Nome: %s\n Alocamento maximo: %d\n", state_name, max_alloc);
+
+	strcpy(response, "{teste = 3}");
+
+}
+
 static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 {
 	pr_debug("Receive a msg from user space\n");
 
-	char *response_msg = "{"
-						 " test = 3 "
-						 "}";
+	char response_msg[LUNATIK_FRAGMENT_SIZE];
 
 	struct lunatik_controlstate *control_state;
 	char *msg_payload;
@@ -1035,7 +1069,21 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 		goto error;
 	}
 
-	send_msg_to_userspace(response_msg, info);
+	switch (op_number)
+	{
+	case CREATE_STATE:
+		// pr_info("%d\n", op_number);
+		handle_control_state_msg(control_state, response_msg);
+		// get_string_from_table(control_state, "name");
+		break;
+	
+	default:
+		break;
+	}
+
+	pr_info("%s\n", response_msg);
+
+	send_msg_to_userspace("Deu tudo certo aqui", info);
 
 	return 0;
 error:
