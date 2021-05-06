@@ -1015,53 +1015,100 @@ static int get_int_from_table(struct lunatik_controlstate *control_state, char *
 }
 
 
-static char *get_string_from_table(struct lunatik_controlstate *control_state, char *attr_name) 
+static int get_string_from_table(struct lunatik_controlstate *control_state, char *attr_name, char *string) 
 {
 	lua_State *L = control_state->lua_state;
-	size_t string_size = 0;
-	
+	const char *tmp_string;
 
-	if (L == NULL) return NULL;
+	if (L == NULL || string == NULL) return -EPERM;
 
 	/* First get the global table named msg */
 	if(lua_getglobal(L, "msg") != LUA_TTABLE) {
-		return NULL;
+		return -EINVAL;
 	}
 
 	if(lua_getfield(L, -1, attr_name) != LUA_TSTRING) {
-		return NULL;
+		return -EINVAL;
 	}
 
-	return lua_tostring(L, -1);
+	tmp_string = lua_tostring(L, -1);
+	memcpy(string, tmp_string, strlen(tmp_string));
+
+	return 0;
 }
 
+static char *create_string(size_t len)
+{
+	char *result;
 
-static void handle_control_state_msg(struct lunatik_controlstate *control_state, char *response)
+	result = kzalloc(len, GFP_KERNEL);
+
+	return result;
+}
+
+static int handle_create_state_msg(struct lunatik_controlstate *control_state, char *response)
 {
 	char *state_name;
+	const char *tmp_string;
 	lua_Integer max_alloc;
+	lua_State *L = control_state->lua_state;
+	lunatik_State *state;
 
-	state_name = get_string_from_table(control_state, "name");
-	get_int_from_table(control_state, "maxalloc", &max_alloc);
+	if (L == NULL) {
+		return -ENODATA;
+	}
 
-	pr_info("Nome: %s\n Alocamento maximo: %d\n", state_name, max_alloc);
+	state_name = create_string(LUNATIK_NAME_MAXSIZE);
 
-	strcpy(response, "{teste = 3}");
+	if (state_name == NULL) {
+		tmp_string = lua_pushfstring(L, "{ response = 'Failed to allocate memory for state name', operation_success = false } ");
+		memcpy(response, tmp_string, strlen(tmp_string));
+		return -ENOMEM;
+	}
 
+	if (
+		get_string_from_table(control_state, "name", state_name) ||
+		get_int_from_table(control_state, "maxalloc", &max_alloc)
+	) {
+		tmp_string = lua_pushfstring(L, "{ response = 'Failed to get state informations', operation_success = false } ");
+		memcpy(response, tmp_string, strlen(tmp_string));
+		return -EPROTO;
+	}
+
+	state = lunatik_newstate(state_name, max_alloc);
+
+	if (state == NULL) {
+		tmp_string = lua_pushfstring(L, "{ response = 'Failed to create the state %s', operation_success = false } ", state_name);
+		memcpy(response, tmp_string, strlen(tmp_string));
+		return -EPROTO;
+	}
+
+	tmp_string = lua_pushfstring(L,"{ response = 'State %s successfully created', curr_alloc = %d, operation_success = true }", 
+								  state_name, state->curralloc);
+
+	memcpy(response, tmp_string, strlen(tmp_string));
+
+	return 0;
 }
 
 static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 {
 	pr_debug("Receive a msg from user space\n");
 
-	char response_msg[LUNATIK_FRAGMENT_SIZE];
-
 	struct lunatik_controlstate *control_state;
+	char *response_msg;
 	char *msg_payload;
 	lua_Integer op_number;
 
 	control_state = &lunatik_pernet(genl_info_net(info))->control_state;
 	msg_payload = (char *)nla_data(info->attrs[MSG_PAYLOAD]);
+
+	response_msg = create_string(LUNATIK_FRAGMENT_SIZE);
+
+	if (response_msg == NULL) {
+		send_msg_to_userspace("{ response = 'Failed to allocate memory', operation_success = false } ", info);
+		return 0;
+	}
 
 	if (run_safe_code_on_control_state(control_state, msg_payload)) goto error;
 
@@ -1072,18 +1119,14 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 	switch (op_number)
 	{
 	case CREATE_STATE:
-		// pr_info("%d\n", op_number);
-		handle_control_state_msg(control_state, response_msg);
-		// get_string_from_table(control_state, "name");
+		handle_create_state_msg(control_state, response_msg);
 		break;
 	
 	default:
 		break;
 	}
 
-	pr_info("%s\n", response_msg);
-
-	send_msg_to_userspace("Deu tudo certo aqui", info);
+	send_msg_to_userspace(response_msg, info);
 
 	return 0;
 error:
