@@ -34,7 +34,7 @@
 #include "netlink_common.h"
 
 #define DATA_RECV_FUNC	("receive_callback")
-#define MAX_INSTRUCTIONS	(10)
+#define MAX_INSTRUCTIONS	(100)
 
 struct lunatik_nl_state {
 	char name[LUNATIK_NAME_MAXSIZE];
@@ -976,6 +976,16 @@ static void lstop(struct lua_State *L, struct lua_Debug *ar) {
 	luaL_error(L, "instruction limit exceeded");
 }
 
+static void create_error_msg(char *buffer, char *msg)
+{
+	if (buffer != NULL) {
+		sprintf(buffer, "{"
+						" response = \"%s\","
+						" operation_success = false"
+						" }", msg);
+	}
+}
+
 static int run_safe_code_on_control_state(struct lunatik_controlstate *control_state, char *code)
 {
 	lua_State *L = control_state->lua_state;
@@ -1013,7 +1023,6 @@ static int get_int_from_table(struct lunatik_controlstate *control_state, char *
 
 	return 0;
 }
-
 
 static int get_string_from_table(struct lunatik_controlstate *control_state, char *attr_name, char *string) 
 {
@@ -1061,8 +1070,7 @@ static int handle_create_state_msg(struct lunatik_controlstate *control_state, c
 	state_name = create_string(LUNATIK_NAME_MAXSIZE);
 
 	if (state_name == NULL) {
-		tmp_string = lua_pushfstring(L, "{ response = 'Failed to allocate memory for state name', operation_success = false } ");
-		memcpy(response, tmp_string, strlen(tmp_string));
+		create_error_msg(response, "Failed to allocate memory for state name");
 		return -ENOMEM;
 	}
 
@@ -1070,23 +1078,19 @@ static int handle_create_state_msg(struct lunatik_controlstate *control_state, c
 		get_string_from_table(control_state, "name", state_name) ||
 		get_int_from_table(control_state, "maxalloc", &max_alloc)
 	) {
-		tmp_string = lua_pushfstring(L, "{ response = 'Failed to get state informations', operation_success = false } ");
-		memcpy(response, tmp_string, strlen(tmp_string));
+		create_error_msg(response, "Failed to get state informations");
 		return -EPROTO;
 	}
 
 	state = lunatik_newstate(state_name, max_alloc);
 
 	if (state == NULL) {
-		tmp_string = lua_pushfstring(L, "{ response = 'Failed to create the state %s', operation_success = false } ", state_name);
-		memcpy(response, tmp_string, strlen(tmp_string));
+		create_error_msg(response, "Failed to create state");
 		return -EPROTO;
 	}
 
-	tmp_string = lua_pushfstring(L,"{ response = 'State %s successfully created', curr_alloc = %d, operation_success = true }", 
+	sprintf(response,"{ response = 'State %s successfully created', curr_alloc = %d, operation_success = true }", 
 								  state_name, state->curralloc);
-
-	memcpy(response, tmp_string, strlen(tmp_string));
 
 	return 0;
 }
@@ -1106,7 +1110,7 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 	response_msg = create_string(LUNATIK_FRAGMENT_SIZE);
 
 	if (response_msg == NULL) {
-		send_msg_to_userspace("{ response = 'Failed to allocate memory', operation_success = false } ", info);
+		send_msg_to_userspace("{ response = 'Failed to allocate a response msg', operation_success = false } ", info);
 		return 0;
 	}
 
