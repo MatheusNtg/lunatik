@@ -32,11 +32,33 @@ function LunatikState:dostring(code)
 
 	local ok, kernel_response = messenger.send(msg)
 
-	if ok then
-		print(kernel_response)
+	if not ok then
+		return nil, 'Failed to send message to kernel'
 	end
 
-	return nil
+	local response_table = get_table_from_string(kernel_response)
+
+	return response_table.operation_success, response_table.response
+end
+
+function LunatikState:putstate()
+	local msg = string.format([[
+		msg = {
+			name = "%s",
+			operation = %d
+		}
+	]], self.name, messenger.operations.PUT_STATE)
+
+	local ok, kernel_response = messenger.send(msg)
+
+	if not ok then
+		return nil, 'Failed to send message to kernel'
+	end
+
+	local response_table = get_table_from_string(kernel_response)
+
+	return response_table.operation_success, response_table.response
+	
 
 end
 
@@ -52,16 +74,17 @@ function lunatik.new_state(name, maxalloc)
 
 	local ok, kernel_response = messenger.send(msg)
 
+	
+	if not ok then
+		return nil, 'Failed to send message to kernel'
+	end
+	
 	local response_table = get_table_from_string(kernel_response)
 
 	if not response_table.operation_success then
 		return nil, response_table.response
 	end
-
-	if not ok then
-		return nil, response_table.response
-	end
-
+	
 	return true, LunatikState:new{
 		name = name,
 		maxalloc = maxalloc,

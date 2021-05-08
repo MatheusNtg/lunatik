@@ -166,6 +166,7 @@ int luaopen_lunatik_messenger(lua_State *L)
 	setconst(L, "DO_STRING", DO_STRING);
 	setconst(L, "DESTROY_STATE", DESTROY_STATE);
 	setconst(L, "LIST_STATES",LIST_STATES);
+	setconst(L, "PUT_STATE", PUT_STATE);
 
 	lua_setfield(L, -2, "operations");
 
