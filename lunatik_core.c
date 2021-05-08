@@ -237,20 +237,21 @@ static int __net_init lunatik_newnamespace(struct net *net)
 static void __net_exit lunatik_closenamespace(struct net *net)
 {
 	struct lunatik_namespace *lunatik_namespace;
+	struct lunatik_controlstate *control_state;
 	lunatik_State *s;
+	struct hlist_node *tmp;
 	int bkt;
 
 	lunatik_namespace = lunatik_pernet(net);
+	control_state = &(lunatik_namespace->control_state);
 
 	spin_lock_bh(&(lunatik_namespace->statestable_lock));
 
-	hash_for_each(lunatik_namespace->states_table, bkt, s, node) {
+	hash_for_each_safe(lunatik_namespace->states_table, bkt, tmp, s, node) {
 		state_destroy(s);
-		if (hash_empty(lunatik_namespace->states_table))
-			break;
 	}
 
-	lua_close(lunatik_namespace->control_state.lua_state);
+	lua_close(control_state->lua_state);
 
 	spin_unlock_bh(&(lunatik_namespace->statestable_lock));
 }

@@ -57,8 +57,7 @@ inline lunatik_State *lunatik_statelookup(const char *name)
 
 void state_destroy(lunatik_State *s)
 {
-	hash_del_rcu(&s->node);
-	atomic_dec(&(s->lunatik_namespace->states_count));
+	if (s == NULL) return;
 
 	spin_lock_bh(&s->lock);
 	if (s->L != NULL) {
@@ -163,6 +162,7 @@ void lunatik_putstate(lunatik_State *s)
 		goto unlock;
 
 	hash_del_rcu(&s->node);
+	atomic_dec(&(s->lunatik_namespace->states_count));
 	kfree(s);
 	s = NULL;
 unlock:
