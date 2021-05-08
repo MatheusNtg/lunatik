@@ -101,6 +101,8 @@ static int send_message(lua_State *L) {
 		return pusherrmsg(L, "Failed to resolve lunatik family");
 	}
 
+	memset(kernel_msg, 0, LUNATIK_FRAGMENT_SIZE);
+
 	nl_socket_modify_cb(socket, NL_CB_MSG_IN, NL_CB_CUSTOM, handle_kernel_msg, kernel_msg);
 
 	/* Prepare message */

@@ -945,6 +945,10 @@ static int send_msg_to_userspace(char *msg, struct genl_info *info)
 {
 	struct sk_buff *obuff;
 	void *msg_head;
+	
+	if (msg == NULL) {
+		pr_err("Message can't be null\n");
+	}
 
 	if ((obuff = genlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL)) == NULL) {
 		pr_err("Failed allocating message to an reply\n");
@@ -1055,7 +1059,7 @@ static char *create_string(size_t len)
 	return result;
 }
 
-static int handle_create_state_msg(struct lunatik_controlstate *control_state, char *response)
+static int handle_create_state_msg(struct lunatik_controlstate *control_state, char *response, struct net *net)
 {
 	char *state_name;
 	const char *tmp_string;
@@ -1064,6 +1068,7 @@ static int handle_create_state_msg(struct lunatik_controlstate *control_state, c
 	lunatik_State *state;
 
 	if (L == NULL) {
+		create_error_msg(response, "Lua control state is not allocated");
 		return -ENODATA;
 	}
 
@@ -1079,18 +1084,27 @@ static int handle_create_state_msg(struct lunatik_controlstate *control_state, c
 		get_int_from_table(control_state, "maxalloc", &max_alloc)
 	) {
 		create_error_msg(response, "Failed to get state informations");
+		kfree(state_name);
+		state_name = NULL;
 		return -EPROTO;
 	}
 
-	state = lunatik_newstate(state_name, max_alloc);
+	state = lunatik_netnewstate(state_name, max_alloc, net);
 
 	if (state == NULL) {
 		create_error_msg(response, "Failed to create state");
+		kfree(state_name);
+		state_name = NULL;
 		return -EPROTO;
 	}
 
 	sprintf(response,"{ response = 'State %s successfully created', curr_alloc = %d, operation_success = true }", 
 								  state_name, state->curralloc);
+	kfree(state_name);
+	state_name = NULL;
+
+	return 0;
+}
 
 // TODO Review errors
 static int handle_do_string(struct lunatik_controlstate *controlstate, char *response, struct net *net)
@@ -1144,30 +1158,29 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 	pr_debug("Receive a msg from user space\n");
 
 	struct lunatik_controlstate *control_state;
-	char *response_msg;
+	char response_msg[LUNATIK_FRAGMENT_SIZE];
 	char *msg_payload;
 	lua_Integer op_number;
 
 	control_state = &lunatik_pernet(genl_info_net(info))->control_state;
 	msg_payload = (char *)nla_data(info->attrs[MSG_PAYLOAD]);
 
-	response_msg = create_string(LUNATIK_FRAGMENT_SIZE);
+	op_number = 0;
 
-	if (response_msg == NULL) {
-		send_msg_to_userspace("{ response = 'Failed to allocate a response msg', operation_success = false } ", info);
+	if (run_safe_code_on_control_state(control_state, msg_payload)) {
+		send_msg_to_userspace("{ response = 'Failed to load the table on kernel', operation_success = false }", info);
 		return 0;
 	}
 
-	if (run_safe_code_on_control_state(control_state, msg_payload)) goto error;
-
 	if (get_int_from_table(control_state, "operation", &op_number)) {
-		goto error;
+		send_msg_to_userspace("{ response = 'Failed to get operation on the received table', operation_success = false }", info);
+		return 0;
 	}
 
 	switch (op_number)
 	{
 	case CREATE_STATE:
-		handle_create_state_msg(control_state, response_msg);
+		handle_create_state_msg(control_state, response_msg, genl_info_net(info));
 		break;
 	case DO_STRING:
 		handle_do_string(control_state, response_msg, genl_info_net(info));
