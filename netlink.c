@@ -1092,6 +1092,50 @@ static int handle_create_state_msg(struct lunatik_controlstate *control_state, c
 	sprintf(response,"{ response = 'State %s successfully created', curr_alloc = %d, operation_success = true }", 
 								  state_name, state->curralloc);
 
+// TODO Review errors
+static int handle_do_string(struct lunatik_controlstate *controlstate, char *response, struct net *net)
+{
+	char *state_name;
+	char *code;
+	lua_State *L;
+	lunatik_State *lunatik_state;
+
+	L = controlstate->lua_state;
+
+	if (L == NULL) {
+		create_error_msg(response, "Failed to get control state");
+		return -EPROTO;
+	}
+
+	state_name = create_string(LUNATIK_NAME_MAXSIZE);
+	code = create_string(LUNATIK_FRAGMENT_SIZE);
+
+	if (state_name == NULL || code == NULL) {
+		create_error_msg(response, "Failed to create buffers on kernel");
+		return -EPROTO;
+	}
+
+	if (
+		get_string_from_table(controlstate, "name", state_name) ||
+		get_string_from_table(controlstate, "code", code)
+	) {
+		create_error_msg(response, "Failed to get informations from table");
+		return -EPROTO;
+	}
+
+	lunatik_state = lunatik_netstatelookup(state_name, net);
+
+	if (lunatik_state == NULL) {
+		create_error_msg(response, "Failed to find the requested state");
+		return -EPROTO;
+	}
+	
+	if (luaL_dostring(lunatik_state->L, code)) {
+		create_error_msg(response, "Failed to load the requested code");
+	}
+
+	sprintf(response, "{ response = 'Code successfully loaded', operation_success = true }");
+
 	return 0;
 }
 
@@ -1125,7 +1169,9 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 	case CREATE_STATE:
 		handle_create_state_msg(control_state, response_msg);
 		break;
-	
+	case DO_STRING:
+		handle_do_string(control_state, response_msg, genl_info_net(info));
+		break;
 	default:
 		break;
 	}

@@ -20,9 +20,29 @@ function LunatikState:new (o)
 	return o
 end
 
+function LunatikState:dostring(code)
+	code = "[[" .. code .. "]]"
+	local msg = string.format([[
+		msg = {
+			name = "%s",
+			code = %s,
+			operation = %d
+		}
+	]],self.name, code, messenger.operations.DO_STRING)
+
+	local ok, kernel_response = messenger.send(msg)
+
+	if ok then
+		print(kernel_response)
+	end
+
+	return nil
+
+end
+
 function lunatik.new_state(name, maxalloc)
 
-	msg = string.format([[
+	local msg = string.format([[
 		msg = {
 			operation = %d,
 			name = "%s",
@@ -30,9 +50,9 @@ function lunatik.new_state(name, maxalloc)
 		}
 	]], messenger.operations.CREATE_STATE, name, maxalloc)
 
-	ok, kernel_response = messenger.send(msg)
+	local ok, kernel_response = messenger.send(msg)
 
-	response_table = get_table_from_string(kernel_response)
+	local response_table = get_table_from_string(kernel_response)
 
 	if not response_table.operation_success then
 		return nil, response_table.response
