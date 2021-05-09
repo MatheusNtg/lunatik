@@ -41,7 +41,7 @@ function LunatikState:dostring(code)
 	return response_table.operation_success, response_table.response
 end
 
-function LunatikState:putstate()
+function LunatikState:put()
 	local msg = string.format([[
 		msg = {
 			name = "%s",
@@ -58,8 +58,6 @@ function LunatikState:putstate()
 	local response_table = get_table_from_string(kernel_response)
 
 	return response_table.operation_success, response_table.response
-	
-
 end
 
 function lunatik.new_state(name, maxalloc)
@@ -90,6 +88,28 @@ function lunatik.new_state(name, maxalloc)
 		maxalloc = maxalloc,
 		currAlloc = response_table.curr_alloc
 	}
+
+end
+
+function lunatik.list()
+	local msg = string.format([[
+		msg = {
+			init = true,
+			operation = %d
+		}
+	]], messenger.operations.LIST_STATES)
+
+	local ok, kernel_response = messenger.send(msg)
+
+	if not ok then
+		return nil, 'Failed to send message to list states to kernel'
+	end
+
+	local response_table = get_table_from_string(kernel_response)
+
+	local states_amount = response_table.states_amount
+	
+	print(states_amount)
 
 end
 

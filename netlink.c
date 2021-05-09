@@ -1050,6 +1050,26 @@ static int get_string_from_table(struct lunatik_controlstate *control_state, cha
 	return 0;
 }
 
+static int get_bool_from_table(struct lunatik_controlstate *controlstate, char *attr_name, bool *boolean)
+{
+	lua_State *L = controlstate->lua_state;
+
+	if (L == NULL) return -EPERM;
+
+	/* First get the global table named msg */
+	if(lua_getglobal(L, "msg") != LUA_TTABLE) {
+		return -EINVAL;
+	}
+
+	if(lua_getfield(L, -1, attr_name) != LUA_TBOOLEAN) {
+		return -EINVAL;
+	}
+
+	*boolean = lua_toboolean(L, -1);
+
+	return 0;
+}
+
 static char *create_string(size_t len)
 {
 	char *result;
@@ -1153,6 +1173,52 @@ static int handle_do_string(struct lunatik_controlstate *controlstate, char *res
 	return 0;
 }
 
+// TODO put consistent errors
+static int handle_put_state(struct lunatik_controlstate *controlstate, char *response, struct net* namespace)
+{
+	char *state_name;
+	lunatik_State *lunatik_state;
+
+	state_name = create_string(LUNATIK_NAME_MAXSIZE);
+
+	if (state_name == NULL) {
+		create_error_msg(response, "Failed to allocate memory to state name buffer");
+		return -1;
+	}
+
+	if (
+		get_string_from_table(controlstate, "name", state_name)
+	) {
+		create_error_msg(response, "Failed to get attributes from lua table");
+		return -1;
+	}
+
+	lunatik_state = lunatik_netstatelookup(state_name, namespace);
+
+	if (lunatik_state == NULL) {
+		create_error_msg(response, "Lunatik state not found");
+		return -1;
+	}
+
+	lunatik_putstate(lunatik_state);
+
+	sprintf(response, "{ response = 'Successfully put state', operation_success = true }");
+
+	return 0;
+}
+
+// TODO make error proper error handling
+static int handle_list_states(struct lunatik_controlstate *controlstate, char *response, struct net *namespace)
+{
+	bool is_init = false;
+
+	get_bool_from_table(controlstate, "init", &is_init);
+
+	pr_info("Valor do booleano (não deve ser falso) %d\n", is_init);
+
+	return 0;
+}
+
 static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 {
 	pr_debug("Receive a msg from user space\n");
@@ -1185,6 +1251,11 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 	case DO_STRING:
 		handle_do_string(control_state, response_msg, genl_info_net(info));
 		break;
+	case PUT_STATE:
+		handle_put_state(control_state, response_msg, genl_info_net(info));
+		break;
+	case LIST_STATES:
+		handle_list_states(control_state, response_msg, genl_info_net(info));
 	default:
 		break;
 	}
