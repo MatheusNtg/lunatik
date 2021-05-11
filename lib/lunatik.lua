@@ -7,7 +7,7 @@ end
 
 local LunatikState = {
 	name = "",
-	currAlloc = 0,
+	curralloc = 0,
 	maxalloc = 0
 }
 
@@ -55,6 +55,10 @@ function LunatikState:put()
 		return nil, 'Failed to send message to kernel'
 	end
 
+	self.name = ""
+	self.curralloc = 0
+	self.maxalloc = 0
+
 	local response_table = get_table_from_string(kernel_response)
 
 	return response_table.operation_success, response_table.response
@@ -86,7 +90,7 @@ function lunatik.new_state(name, maxalloc)
 	return true, LunatikState:new{
 		name = name,
 		maxalloc = maxalloc,
-		currAlloc = response_table.curr_alloc
+		curralloc = response_table.curr_alloc
 	}
 
 end
