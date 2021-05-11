@@ -25,6 +25,8 @@
 #include "luautil.h"
 #include "lunatik.h"
 
+#ifndef LUNATIK_UNUSED
+
 extern int lunatikN_send_data(lunatik_State *state, const char *payload, size_t size);
 
 static int luanetlink_send(lua_State *L)
@@ -58,3 +60,5 @@ int luaopen_netlink(lua_State *L)
 	return 1;
 }
 EXPORT_SYMBOL(luaopen_netlink);
+
+#endif /* LUNATIK_UNUSED */

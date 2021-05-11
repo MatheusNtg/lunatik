@@ -40,7 +40,6 @@ extern struct genl_family lunatik_family;
 enum lunatik_operations {
 	CREATE_STATE = 1, /* Starts at 1 because 0 is used by generic netlink */
 	DO_STRING,
-	DESTROY_STATE,
 	LIST_STATES,
 	DATA,
 	DATA_INIT,
@@ -51,26 +50,7 @@ enum lunatik_operations {
 };
 
 enum lunatik_attrs {
-	STATE_NAME = 1,
-	MAX_ALLOC,
-	STATES_LIST,
-	STATES_COUNT,
-	PARTS,
-	CODE,
-	FLAGS,
-	SCP_PACKET_TYPE,
-	PAYLOAD_SIZE,
-	SCRIPT_NAME,
-	SCRIPT_SIZE,
-	STATES_LIST_EMPTY,
-	OP_SUCESS,
-	OP_ERROR,
-	LUNATIK_DATA,
-	LUNATIK_DATA_LEN,
-	CURR_ALLOC,
-	STATE_NOT_FOUND,
-	NOT_IN_USE,
-	MSG_PAYLOAD,
+	USER_SPACE_MSG = 1,
 	KERNEL_MSG,
 	ATTRS_COUNT
 #define ATTRS_MAX	(ATTRS_COUNT - 1)

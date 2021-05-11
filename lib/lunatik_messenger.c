@@ -118,7 +118,7 @@ static int send_message(lua_State *L) {
 		return pusherrmsg(L, "Failed to put attributes on message");
 	}
 
-	NLA_PUT_STRING(msg, MSG_PAYLOAD, msg_payload);
+	NLA_PUT_STRING(msg, USER_SPACE_MSG, msg_payload);
 	/* End of message preparation */
 
 	if (nl_send_auto(socket, msg) < 0) {
@@ -164,7 +164,6 @@ int luaopen_lunatik_messenger(lua_State *L)
 
 	setconst(L, "CREATE_STATE", CREATE_STATE);
 	setconst(L, "DO_STRING", DO_STRING);
-	setconst(L, "DESTROY_STATE", DESTROY_STATE);
 	setconst(L, "LIST_STATES",LIST_STATES);
 	setconst(L, "PUT_STATE", PUT_STATE);
 
