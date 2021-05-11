@@ -92,6 +92,8 @@ function lunatik.new_state(name, maxalloc)
 end
 
 function lunatik.list()
+	local result = {}
+
 	local msg = string.format([[
 		msg = {
 			init = true,
@@ -108,8 +110,33 @@ function lunatik.list()
 	local response_table = get_table_from_string(kernel_response)
 
 	local states_amount = response_table.states_amount
-	
-	print(states_amount)
+
+	for i = 0, states_amount - 1 do
+		msg = string.format( [[
+			msg = {
+				curr_state_to_get = %d,
+				init = false,
+				operation = %d
+			}
+		]], i, messenger.operations.LIST_STATES)
+
+		ok, kernel_response = messenger.send(msg)
+
+		if not ok then
+			print('Failed to send msg to get ' .. i .. 'th state')
+		end
+
+		response_table = get_table_from_string(kernel_response)
+
+		if response_table.operation_success == false then
+			print('Failed executing the list states operation')
+		end
+		
+		result[#result + 1] = response_table.response
+		
+	end
+
+	return result
 
 end
 

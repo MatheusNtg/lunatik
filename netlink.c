@@ -1082,7 +1082,6 @@ static char *create_string(size_t len)
 static int handle_create_state_msg(struct lunatik_controlstate *control_state, char *response, struct net *net)
 {
 	char *state_name;
-	const char *tmp_string;
 	lua_Integer max_alloc;
 	lua_State *L = control_state->lua_state;
 	lunatik_State *state;
@@ -1210,11 +1209,71 @@ static int handle_put_state(struct lunatik_controlstate *controlstate, char *res
 // TODO make error proper error handling
 static int handle_list_states(struct lunatik_controlstate *controlstate, char *response, struct net *namespace)
 {
-	bool is_init = false;
+	struct lunatik_namespace *lunatik_namespace;
+	struct lunatik_us_state *states;
+	bool is_init;
+	size_t number_of_states;
+	int bkt;
+	int index;
+	lunatik_State *state;
+	lua_Integer curr_state;
 
-	get_bool_from_table(controlstate, "init", &is_init);
+	is_init = false;
+	number_of_states = 0;
+	index = 0;
+	lunatik_namespace = lunatik_pernet(namespace);
 
-	pr_info("Valor do booleano (não deve ser falso) %d\n", is_init);
+	if (lunatik_namespace == NULL) {
+		create_error_msg(response, "Failed to get namespace");
+		return -1;
+	}
+
+	number_of_states = atomic_read(&lunatik_namespace->states_count);
+
+	if (get_bool_from_table(controlstate, "init", &is_init)) {
+		create_error_msg(response, "Failed to get init atribute");
+		return -1;
+	}
+
+	if (is_init) {
+		lunatik_namespace->states_list = kmalloc(sizeof(struct lunatik_us_state) * number_of_states, GFP_KERNEL);
+		states = lunatik_namespace->states_list;
+		
+		if (states == NULL) {
+			create_error_msg(response, "Failed to create buffer to send states information");
+			return -1;
+		}
+		
+		hash_for_each(lunatik_namespace->states_table, bkt, state, node) {
+			states[index].name = state->name;
+			states[index].curralloc = state->curralloc;
+			states[index].maxalloc = state->maxalloc;
+			index++;
+
+		}
+		
+		sprintf(response, "{ response = 'Operation successfully initialized', operation_success = true, states_amount = %d }", number_of_states);
+		
+		return 0;
+	}
+
+	if (
+		get_int_from_table(controlstate, "curr_state_to_get", &curr_state)
+	) {
+		create_error_msg(response, "Failed to get information about the current requested element");
+		return -1;
+	}
+
+	if (curr_state >= number_of_states) {
+		create_error_msg(response, "Trying to get a state that does not exists");
+		return -1;
+	}
+
+	states = lunatik_namespace->states_list;
+
+	sprintf(response, 
+			" { response = { state_name = '%s', curralloc = %d, maxalloc = %d }, operation_success = true } ",
+			states[curr_state].name, states[curr_state].curralloc, states[curr_state].maxalloc);
 
 	return 0;
 }

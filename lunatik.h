@@ -33,10 +33,17 @@ struct lunatik_controlstate {
 	size_t curr_alloc;
 };
 
+struct lunatik_us_state {
+	char *name;
+	size_t maxalloc;
+	size_t curralloc;
+};
+
 struct lunatik_namespace {
 	DECLARE_HASHTABLE(states_table, ilog2(LUNATIK_HASH_BUCKETS));
 	struct reply_buffer reply_buffer;
 	struct lunatik_controlstate control_state;
+	struct lunatik_us_state *states_list;
 	spinlock_t statestable_lock;
 	spinlock_t rfcnt_lock;
 	spinlock_t sendmessage_lock;
