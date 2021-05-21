@@ -251,7 +251,7 @@ static int handle_create_state_msg(struct lunatik_controlstate *control_state, c
 		return -EPROTO;
 	}
 
-	sprintf(response,"{ response = 'State %s successfully created', curr_alloc = %lu, operation_success = true }", 
+	sprintf(response, "{ response = 'State %s successfully created', curr_alloc = %lu, operation_success = true }", 
 								  state_name, state->curralloc);
 	kfree(state_name);
 	state_name = NULL;
@@ -416,6 +416,38 @@ static int handle_list_states(struct lunatik_controlstate *controlstate, char *r
 	return 0;
 }
 
+// TODO Handle errors
+static int handle_get_state(struct lunatik_controlstate *controlstate, char *response, struct net *namespace)
+{
+	lunatik_State *state;
+	char *state_name;
+
+	state_name = create_string(LUNATIK_NAME_MAXSIZE);
+
+	if (state_name == NULL) {
+		create_error_msg(response, "Failed to alocate memory to search for a state name");
+		return -1;
+	}
+
+	if (
+		get_string_from_table(controlstate, "state_name", state_name)
+	) {
+		create_error_msg(response, "Failed to get attribute name from table");
+		return -1;
+	}
+
+	state = lunatik_netstatelookup(state_name, namespace);
+
+	if (state == NULL) {
+		create_error_msg(response, "State not found");
+		return -1;
+	}
+
+	sprintf(response, "{ state_name = '%s', curr_alloc = %ld, max_alloc = %ld, operation_success = true } ", state->name, state->curralloc, state->maxalloc);
+
+	return 0;
+}
+
 static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 {
 	pr_debug("Receive a msg from user space\n");
@@ -453,6 +485,10 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 		break;
 	case LIST_STATES:
 		handle_list_states(control_state, response_msg, genl_info_net(info));
+		break;
+	case GET_STATE:
+		handle_get_state(control_state, response_msg, genl_info_net(info));
+		break;
 	default:
 		break;
 	}

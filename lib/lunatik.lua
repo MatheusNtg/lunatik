@@ -95,6 +95,43 @@ function lunatik.new_state(name, maxalloc)
 
 end
 
+function lunatik.get_state(state_name)
+	if type(state_name) ~= 'string' then
+		return nil, 'state name must be a string'
+	end
+
+	if string.len(state_name) >= messenger.constants.LUNATIK_NAME_MAXSIZE then
+		return nil, 'state name longer than the maximum allowed'
+	end
+
+	local msg = string.format([[
+		msg = {
+			state_name = %q,
+			operation = %d
+		}
+	]], state_name, messenger.operations.GET_STATE)
+
+	local ok, kernel_response = messenger.send(msg)
+
+	if not ok then
+		return nil, 'Failed to put msg to kernel'
+	end
+
+	local response_table = get_table_from_string(kernel_response)
+
+	if response_table.operation_success == false then
+		return nil, response_table.response
+	end
+
+	return true, LunatikState:new{
+		name = response_table.state_name,
+		curralloc = response_table.curr_alloc,
+		maxalloc = response_table.max_alloc
+	}
+
+
+end
+
 function lunatik.list()
 	local result = {}
 
