@@ -32,6 +32,7 @@
 #include <lmemlib.h>
 
 #include "../netlink_common.h"
+#include "../lunatik_conf.h"
 
 static int pusherrmsg(lua_State *L, const char *msg)
 {
@@ -161,13 +162,17 @@ int luaopen_lunatik_messenger(lua_State *L)
 	luaL_newlib(L, messager_lib);
 	
 	lua_newtable(L);
-
 	setconst(L, "CREATE_STATE", CREATE_STATE);
 	setconst(L, "DO_STRING", DO_STRING);
 	setconst(L, "LIST_STATES",LIST_STATES);
 	setconst(L, "PUT_STATE", PUT_STATE);
-
+	setconst(L, "GET_STATE", GET_STATE);
 	lua_setfield(L, -2, "operations");
+
+	lua_newtable(L);
+	setconst(L, "LUNATIK_NAME_MAXSIZE", LUNATIK_NAME_MAXSIZE);
+	setconst(L, "LUNATIK_MIN_ALLOC_BYTES", LUNATIK_MIN_ALLOC_BYTES);
+	lua_setfield(L, -2, "constants");
 
 	return 1;
 }
