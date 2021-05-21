@@ -21,11 +21,15 @@ function LunatikState:new (o)
 end
 
 function LunatikState:dostring(code)
-	code = "[[" .. code .. "]]"
+
+	if type(code) ~= 'string' then
+		return nil, 'code must be string'
+	end
+
 	local msg = string.format([[
 		msg = {
-			name = "%s",
-			code = %s,
+			name = %q,
+			code = %q,
 			operation = %d
 		}
 	]],self.name, code, messenger.operations.DO_STRING)
@@ -42,9 +46,10 @@ function LunatikState:dostring(code)
 end
 
 function LunatikState:put()
+
 	local msg = string.format([[
 		msg = {
-			name = "%s",
+			name = %q,
 			operation = %d
 		}
 	]], self.name, messenger.operations.PUT_STATE)
@@ -66,27 +71,40 @@ end
 
 function lunatik.new_state(name, maxalloc)
 
+	if type(name) ~= 'string' then
+		return nil, 'state name must be a string'
+	end
+
+	if type(maxalloc) == 'nil' then
+		maxalloc = messenger.constants.LUNATIK_MIN_ALLOC_BYTES
+	elseif type(maxalloc) ~= 'number' then
+		return nil, 'maxalloc must be nil or number'
+	end
+
+	if string.len(name) >= messenger.constants.LUNATIK_NAME_MAXSIZE then
+		return nil, 'state name is bigger than the maximum allowed'
+	end
+
 	local msg = string.format([[
 		msg = {
 			operation = %d,
-			name = "%s",
+			name = %q,
 			maxalloc = %d
 		}
 	]], messenger.operations.CREATE_STATE, name, maxalloc)
 
 	local ok, kernel_response = messenger.send(msg)
 
-	
 	if not ok then
 		return nil, 'Failed to send message to kernel'
 	end
-	
+
 	local response_table = get_table_from_string(kernel_response)
 
 	if not response_table.operation_success then
 		return nil, response_table.response
 	end
-	
+
 	return true, LunatikState:new{
 		name = name,
 		maxalloc = maxalloc,
@@ -172,9 +190,9 @@ function lunatik.list()
 		if response_table.operation_success == false then
 			print('Failed executing the list states operation')
 		end
-		
+
 		result[#result + 1] = response_table.response
-		
+
 	end
 
 	return result
