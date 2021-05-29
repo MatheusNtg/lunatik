@@ -5,6 +5,14 @@ local function get_table_from_string(table_string)
 	return load('return ' .. table_string)()
 end
 
+local function split_text_into_chunks(text, chunk_size)
+	local s = {}
+	for i=1, #text, chunk_size do
+		s[#s+1] = text:sub(i, i + chunk_size - 1)
+	end
+	return s
+end
+
 local LunatikState = {
 	name = "",
 	curralloc = 0,
@@ -26,23 +34,39 @@ function LunatikState:dostring(code)
 		return nil, 'code must be string'
 	end
 
-	local msg = string.format([[
-		msg = {
-			name = %q,
-			code = %q,
-			operation = %d
-		}
-	]],self.name, code, messenger.operations.DO_STRING)
+	local fragment_size = messenger.constants.LUNATIK_FRAGMENT_SIZE
 
-	local ok, kernel_response = messenger.send(msg)
+	local code_chunks = split_text_into_chunks(code, fragment_size)
 
-	if not ok then
-		return nil, 'Failed to send message to kernel'
+	local response_table = nil
+
+	for k, v in pairs(code_chunks) do
+		local frag_msg = string.format([[
+			msg = {
+				name = %q,
+				code_size = %d,
+				fragment = %q,
+				fragment_size = %d,
+				fragment_index = %d,
+				fragment_amount = %d,
+				operation = %d
+			}
+		]], self.name, string.len(code), v, string.len(v), k, #code_chunks, messenger.operations.DO_STRING)
+
+		local ok, kernel_response = messenger.send( frag_msg )
+
+		if not ok then
+			return nil, 'Failed to send msg to kernel'
+		end
+
+		response_table = get_table_from_string( kernel_response )
+
+		if not response_table.operation_success then
+			return nil, response_table.response
+		end
 	end
 
-	local response_table = get_table_from_string(kernel_response)
-
-	return response_table.operation_success, response_table.response
+	return true, response_table.response
 end
 
 function LunatikState:put()

@@ -172,6 +172,7 @@ int luaopen_lunatik_messenger(lua_State *L)
 	lua_newtable(L);
 	setconst(L, "LUNATIK_NAME_MAXSIZE", LUNATIK_NAME_MAXSIZE);
 	setconst(L, "LUNATIK_MIN_ALLOC_BYTES", LUNATIK_MIN_ALLOC_BYTES);
+	setconst(L, "LUNATIK_FRAGMENT_SIZE", LUNATIK_FRAGMENT_SIZE);
 	lua_setfield(L, -2, "constants");
 
 	return 1;

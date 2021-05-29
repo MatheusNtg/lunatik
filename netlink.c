@@ -135,7 +135,7 @@ static int run_safe_code_on_control_state(struct lunatik_controlstate *control_s
 	lua_sethook(L, lstop, LUA_MASKCOUNT, MAX_INSTRUCTIONS);
 
 	if (lua_pcall(L, 0, LUA_MULTRET, 0)) {
-		pr_err(KERN_INFO "Error executing code on control state");
+		pr_err("Error executing code on control state");
 		return -1;
 	}
 
@@ -213,6 +213,36 @@ static char *create_string(size_t len)
 	return result;
 }
 
+static int init_state_code_buffer(lunatik_State *state, size_t buffer_len)
+{
+	if (state == NULL) {
+		return -1;
+	}
+
+	state->code_buffer = create_string(buffer_len);
+
+	if (state->code_buffer == NULL) {
+		return -1;
+	}
+
+	state->buffer_offset = 0;
+
+	return 0;
+}
+
+static void copy_fragment_to_code_buffer(lunatik_State *lunatik_state, char *fragment, size_t fragment_size)
+{
+	int curr_off = lunatik_state->buffer_offset;
+	memcpy(lunatik_state->code_buffer + curr_off, fragment, fragment_size);
+	lunatik_state->buffer_offset += fragment_size;
+}
+
+static void release_string(char *string)
+{
+	kfree(string);
+	string = NULL;
+}
+
 static int handle_create_state_msg(struct lunatik_controlstate *control_state, char *response, struct net *net)
 {
 	char *state_name;
@@ -267,9 +297,14 @@ static int handle_create_state_msg(struct lunatik_controlstate *control_state, c
 static int handle_do_string(struct lunatik_controlstate *controlstate, char *response, struct net *net)
 {
 	char *state_name;
-	char *code;
+	char *fragment;
 	lua_State *L;
 	lunatik_State *lunatik_state;
+	lua_Integer code_len;
+	lua_Integer fragment_size;
+	lua_Integer fragment_index;
+	lua_Integer fragment_amount;
+
 
 	L = controlstate->lua_state;
 
@@ -279,33 +314,79 @@ static int handle_do_string(struct lunatik_controlstate *controlstate, char *res
 	}
 
 	state_name = create_string(LUNATIK_NAME_MAXSIZE);
-	code = create_string(LUNATIK_FRAGMENT_SIZE);
 
-	if (state_name == NULL || code == NULL) {
-		create_error_msg(response, "Failed to create buffers on kernel");
-		return -EPROTO;
+	if (state_name == NULL) {
+		create_error_msg(response, "Failed to allocate a string to state name on kernel");
+		return -ENOMEM;
 	}
 
 	if (
-		get_string_from_table(controlstate, "name", state_name) ||
-		get_string_from_table(controlstate, "code", code)
+		get_string_from_table(controlstate, "name", state_name)  ||
+		get_int_from_table(controlstate, "code_size", &code_len) ||
+		get_int_from_table(controlstate, "fragment_size", &fragment_size) ||
+		get_int_from_table(controlstate, "fragment_amount", &fragment_amount) ||
+		get_int_from_table(controlstate, "fragment_index", &fragment_index)
 	) {
-		create_error_msg(response, "Failed to get informations from table");
+		release_string(state_name);
+		create_error_msg(response, "Failed to get attributes to initialize protocol");
 		return -EPROTO;
 	}
 
 	lunatik_state = lunatik_netstatelookup(state_name, net);
 
 	if (lunatik_state == NULL) {
-		create_error_msg(response, "Failed to find the requested state");
+		release_string(state_name);
+		create_error_msg(response, "Required state not found");
+		return -EPROTO;
+	}
+
+	/** 
+	 * This means that we are receiving 
+	 * the first fragment and we need to 
+	 * initialize the code buffer on the 
+	 * required state
+	*/
+	if (fragment_index == 1 && init_state_code_buffer(lunatik_state, code_len)) {
+		release_string(state_name);
+		create_error_msg(response, "Failed to initialize code buffer");
+		return -EPROTO;
+	}
+
+	fragment = create_string(fragment_size);
+
+	if (fragment == NULL) {
+		create_error_msg(response, "Failed to allocate memory for fragment buffer");
+		return -ENOMEM;
+	}
+
+	if (
+		get_string_from_table(controlstate, "fragment", fragment)
+	) {
+		create_error_msg(response, "Failed to get fragment");
+		release_string(fragment);
+		release_string(state_name);
 		return -EPROTO;
 	}
 	
-	if (luaL_dostring(lunatik_state->L, code)) {
-		create_error_msg(response, "Failed to load the requested code");
+
+	copy_fragment_to_code_buffer(lunatik_state, fragment, fragment_size);
+
+	if (fragment_index == fragment_amount) {
+		luaL_dostring(lunatik_state->L, lunatik_state->code_buffer);
+		
+		release_string(lunatik_state->code_buffer);
+		lunatik_state->buffer_offset = 0;
+		
+		release_string(fragment);
+		release_string(state_name);
+		
+		sprintf(response, "{ response = 'Code succesfully loaded', operation_success = true }");
+		return 0;
 	}
 
-	sprintf(response, "{ response = 'Code successfully loaded', operation_success = true }");
+	sprintf(response, "{ response = 'Code copied to buffer', operation_success = true }");
+	release_string(fragment);
+	release_string(state_name);
 
 	return 0;
 }
@@ -462,6 +543,8 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 
 	op_number = 0;
 
+	lua_settop(control_state->lua_state, 0);
+
 	if (run_safe_code_on_control_state(control_state, msg_payload)) {
 		send_msg_to_userspace("{ response = 'Failed to load the table on kernel', operation_success = false }", info);
 		return 0;
@@ -492,6 +575,8 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 	default:
 		break;
 	}
+
+	lua_gc(control_state->lua_state, LUA_GCCOLLECT, 0);
 
 	send_msg_to_userspace(response_msg, info);
 
