@@ -524,6 +524,10 @@ static int handle_get_state(struct lunatik_controlstate *controlstate, char *res
 		return -1;
 	}
 
+	if (!lunatik_getstate(state)) {
+		create_error_msg(response, "Failed to increment user counter");
+	}
+
 	sprintf(response, "{ state_name = '%s', curr_alloc = %ld, max_alloc = %ld, operation_success = true } ", state->name, state->curralloc, state->maxalloc);
 
 	return 0;
