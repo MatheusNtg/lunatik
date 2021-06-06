@@ -142,7 +142,7 @@ static int run_safe_code_on_control_state(struct lunatik_controlstate *control_s
 	return 0;
 }
 
-static int get_int_from_table(struct lunatik_controlstate *control_state, char *attr_name, lua_Integer *integer) 
+static int get_int_from_control_state(struct lunatik_controlstate *control_state, char *attr_name, lua_Integer *integer) 
 {
 	lua_State *L = control_state->lua_state;
 
@@ -162,7 +162,7 @@ static int get_int_from_table(struct lunatik_controlstate *control_state, char *
 	return 0;
 }
 
-static int get_string_from_table(struct lunatik_controlstate *control_state, char *attr_name, char *string) 
+static int get_string_from_control_state(struct lunatik_controlstate *control_state, char *attr_name, char *string) 
 {
 	lua_State *L = control_state->lua_state;
 	const char *tmp_string;
@@ -184,7 +184,7 @@ static int get_string_from_table(struct lunatik_controlstate *control_state, cha
 	return 0;
 }
 
-static int get_bool_from_table(struct lunatik_controlstate *controlstate, char *attr_name, bool *boolean)
+static int get_bool_from_control_state(struct lunatik_controlstate *controlstate, char *attr_name, bool *boolean)
 {
 	lua_State *L = controlstate->lua_state;
 
@@ -213,7 +213,7 @@ static char *create_string(size_t len)
 	return result;
 }
 
-static int init_state_code_buffer(lunatik_State *state, size_t buffer_len)
+static int init_code_buffer_on_state(lunatik_State *state, size_t buffer_len)
 {
 	if (state == NULL) {
 		return -1;
@@ -243,7 +243,7 @@ static void release_string(char *string)
 	string = NULL;
 }
 
-static int handle_create_state_msg(struct lunatik_controlstate *control_state, char *response, struct net *net)
+static void handle_create_state_msg(struct lunatik_controlstate *control_state, char *response, struct net *net)
 {
 	char *state_name;
 	lua_Integer max_alloc;
@@ -252,24 +252,24 @@ static int handle_create_state_msg(struct lunatik_controlstate *control_state, c
 
 	if (L == NULL) {
 		create_error_msg(response, "Lua control state is not allocated");
-		return -ENODATA;
+		return;
 	}
 
 	state_name = create_string(LUNATIK_NAME_MAXSIZE);
 
 	if (state_name == NULL) {
 		create_error_msg(response, "Failed to allocate memory for state name");
-		return -ENOMEM;
+		return;
 	}
 
 	if (
-		get_string_from_table(control_state, "name", state_name) ||
-		get_int_from_table(control_state, "maxalloc", &max_alloc)
+		get_string_from_control_state(control_state, "name", state_name) ||
+		get_int_from_control_state(control_state, "maxalloc", &max_alloc)
 	) {
 		create_error_msg(response, "Failed to get state informations");
 		kfree(state_name);
 		state_name = NULL;
-		return -EPROTO;
+		return;
 	}
 
 	state = lunatik_netnewstate(state_name, max_alloc, net);
@@ -278,7 +278,7 @@ static int handle_create_state_msg(struct lunatik_controlstate *control_state, c
 		create_error_msg(response, "Failed to create state");
 		kfree(state_name);
 		state_name = NULL;
-		return -EPROTO;
+		return;
 	}
 
 	sprintf(response, "{ response = 'State %s successfully created', curr_alloc = %lu, operation_success = true }", 
@@ -286,15 +286,15 @@ static int handle_create_state_msg(struct lunatik_controlstate *control_state, c
 	kfree(state_name);
 	state_name = NULL;
 
-	return 0;
+	return;
 }
 
 /*
 !TODO 
-!1. Review errors
-!2. Return to user if the code was or not succesfully executed
+!1. Handle the case where multiple users tries to load different codes on the same state at the same time
+!2. Put the code to execute on a pcall
 */
-static int handle_do_string(struct lunatik_controlstate *controlstate, char *response, struct net *net)
+static void handle_do_string(struct lunatik_controlstate *controlstate, char *response, struct net *net)
 {
 	char *state_name;
 	char *fragment;
@@ -310,26 +310,26 @@ static int handle_do_string(struct lunatik_controlstate *controlstate, char *res
 
 	if (L == NULL) {
 		create_error_msg(response, "Failed to get control state");
-		return -EPROTO;
+		return;
 	}
 
 	state_name = create_string(LUNATIK_NAME_MAXSIZE);
 
 	if (state_name == NULL) {
 		create_error_msg(response, "Failed to allocate a string to state name on kernel");
-		return -ENOMEM;
+		return;
 	}
 
 	if (
-		get_string_from_table(controlstate, "name", state_name)  ||
-		get_int_from_table(controlstate, "code_size", &code_len) ||
-		get_int_from_table(controlstate, "fragment_size", &fragment_size) ||
-		get_int_from_table(controlstate, "fragment_amount", &fragment_amount) ||
-		get_int_from_table(controlstate, "fragment_index", &fragment_index)
+		get_string_from_control_state(controlstate, "name", state_name)  ||
+		get_int_from_control_state(controlstate, "code_size", &code_len) ||
+		get_int_from_control_state(controlstate, "fragment_size", &fragment_size) ||
+		get_int_from_control_state(controlstate, "fragment_amount", &fragment_amount) ||
+		get_int_from_control_state(controlstate, "fragment_index", &fragment_index)
 	) {
 		release_string(state_name);
 		create_error_msg(response, "Failed to get attributes to initialize protocol");
-		return -EPROTO;
+		return;
 	}
 
 	lunatik_state = lunatik_netstatelookup(state_name, net);
@@ -337,7 +337,7 @@ static int handle_do_string(struct lunatik_controlstate *controlstate, char *res
 	if (lunatik_state == NULL) {
 		release_string(state_name);
 		create_error_msg(response, "Required state not found");
-		return -EPROTO;
+		return;
 	}
 
 	/** 
@@ -346,26 +346,26 @@ static int handle_do_string(struct lunatik_controlstate *controlstate, char *res
 	 * initialize the code buffer on the 
 	 * required state
 	*/
-	if (fragment_index == 1 && init_state_code_buffer(lunatik_state, code_len)) {
+	if (fragment_index == 1 && init_code_buffer_on_state(lunatik_state, code_len)) {
 		release_string(state_name);
 		create_error_msg(response, "Failed to initialize code buffer");
-		return -EPROTO;
+		return;
 	}
 
 	fragment = create_string(fragment_size);
 
 	if (fragment == NULL) {
 		create_error_msg(response, "Failed to allocate memory for fragment buffer");
-		return -ENOMEM;
+		return;
 	}
 
 	if (
-		get_string_from_table(controlstate, "fragment", fragment)
+		get_string_from_control_state(controlstate, "fragment", fragment)
 	) {
 		create_error_msg(response, "Failed to get fragment");
 		release_string(fragment);
 		release_string(state_name);
-		return -EPROTO;
+		return;
 	}
 	
 
@@ -381,18 +381,17 @@ static int handle_do_string(struct lunatik_controlstate *controlstate, char *res
 		release_string(state_name);
 		
 		sprintf(response, "{ response = 'Code succesfully loaded', operation_success = true }");
-		return 0;
+		return;
 	}
 
 	sprintf(response, "{ response = 'Code copied to buffer', operation_success = true }");
 	release_string(fragment);
 	release_string(state_name);
 
-	return 0;
+	return;
 }
 
-// TODO put consistent errors
-static int handle_put_state(struct lunatik_controlstate *controlstate, char *response, struct net* namespace)
+static void handle_put_state(struct lunatik_controlstate *controlstate, char *response, struct net* namespace)
 {
 	char *state_name;
 	lunatik_State *lunatik_state;
@@ -401,32 +400,35 @@ static int handle_put_state(struct lunatik_controlstate *controlstate, char *res
 
 	if (state_name == NULL) {
 		create_error_msg(response, "Failed to allocate memory to state name buffer");
-		return -1;
+		return;
 	}
 
 	if (
-		get_string_from_table(controlstate, "name", state_name)
+		get_string_from_control_state(controlstate, "name", state_name)
 	) {
 		create_error_msg(response, "Failed to get attributes from lua table");
-		return -1;
+		return;
 	}
 
 	lunatik_state = lunatik_netstatelookup(state_name, namespace);
 
 	if (lunatik_state == NULL) {
 		create_error_msg(response, "Lunatik state not found");
-		return -1;
+		return;
 	}
 
 	lunatik_putstate(lunatik_state);
 
 	sprintf(response, "{ response = 'Successfully put state', operation_success = true }");
 
-	return 0;
+	return;
 }
 
-// TODO make error proper error handling
-static int handle_list_states(struct lunatik_controlstate *controlstate, char *response, struct net *namespace)
+/*
+!TODO
+!1. Check for possibles memory leaks
+*/
+static void handle_list_states(struct lunatik_controlstate *controlstate, char *response, struct net *namespace)
 {
 	struct lunatik_namespace *lunatik_namespace;
 	struct lunatik_us_state *states;
@@ -444,14 +446,14 @@ static int handle_list_states(struct lunatik_controlstate *controlstate, char *r
 
 	if (lunatik_namespace == NULL) {
 		create_error_msg(response, "Failed to get namespace");
-		return -1;
+		return;
 	}
 
 	number_of_states = atomic_read(&lunatik_namespace->states_count);
 
-	if (get_bool_from_table(controlstate, "init", &is_init)) {
+	if (get_bool_from_control_state(controlstate, "init", &is_init)) {
 		create_error_msg(response, "Failed to get init atribute");
-		return -1;
+		return;
 	}
 
 	if (is_init) {
@@ -460,7 +462,7 @@ static int handle_list_states(struct lunatik_controlstate *controlstate, char *r
 		
 		if (states == NULL) {
 			create_error_msg(response, "Failed to create buffer to send states information");
-			return -1;
+			return;
 		}
 		
 		hash_for_each(lunatik_namespace->states_table, bkt, state, node) {
@@ -473,19 +475,19 @@ static int handle_list_states(struct lunatik_controlstate *controlstate, char *r
 		
 		sprintf(response, "{ response = 'Operation successfully initialized', operation_success = true, states_amount = %lu }", number_of_states);
 		
-		return 0;
+		return;
 	}
 
 	if (
-		get_int_from_table(controlstate, "curr_state_to_get", &curr_state)
+		get_int_from_control_state(controlstate, "curr_state_to_get", &curr_state)
 	) {
 		create_error_msg(response, "Failed to get information about the current requested element");
-		return -1;
+		return;
 	}
 
 	if (curr_state >= number_of_states) {
 		create_error_msg(response, "Trying to get a state that does not exists");
-		return -1;
+		return;
 	}
 
 	states = lunatik_namespace->states_list;
@@ -494,11 +496,10 @@ static int handle_list_states(struct lunatik_controlstate *controlstate, char *r
 			" { response = { state_name = '%s', curralloc = %lu, maxalloc = %lu }, operation_success = true } ",
 			states[curr_state].name, states[curr_state].curralloc, states[curr_state].maxalloc);
 
-	return 0;
+	return;
 }
 
-// TODO Handle errors
-static int handle_get_state(struct lunatik_controlstate *controlstate, char *response, struct net *namespace)
+static void handle_get_state(struct lunatik_controlstate *controlstate, char *response, struct net *namespace)
 {
 	lunatik_State *state;
 	char *state_name;
@@ -507,21 +508,21 @@ static int handle_get_state(struct lunatik_controlstate *controlstate, char *res
 
 	if (state_name == NULL) {
 		create_error_msg(response, "Failed to alocate memory to search for a state name");
-		return -1;
+		return;
 	}
 
 	if (
-		get_string_from_table(controlstate, "state_name", state_name)
+		get_string_from_control_state(controlstate, "state_name", state_name)
 	) {
 		create_error_msg(response, "Failed to get attribute name from table");
-		return -1;
+		return;
 	}
 
 	state = lunatik_netstatelookup(state_name, namespace);
 
 	if (state == NULL) {
 		create_error_msg(response, "State not found");
-		return -1;
+		return;
 	}
 
 	if (!lunatik_getstate(state)) {
@@ -530,7 +531,7 @@ static int handle_get_state(struct lunatik_controlstate *controlstate, char *res
 
 	sprintf(response, "{ state_name = '%s', curr_alloc = %ld, max_alloc = %ld, operation_success = true } ", state->name, state->curralloc, state->maxalloc);
 
-	return 0;
+	return;
 }
 
 static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
@@ -554,7 +555,7 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 		return 0;
 	}
 
-	if (get_int_from_table(control_state, "operation", &op_number)) {
+	if (get_int_from_control_state(control_state, "operation", &op_number)) {
 		send_msg_to_userspace("{ response = 'Failed to get operation on the received table', operation_success = false }", info);
 		return 0;
 	}
@@ -584,9 +585,6 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 
 	send_msg_to_userspace(response_msg, info);
 
-	return 0;
-error:
-	// TODO Implement this
 	return 0;
 }
 
