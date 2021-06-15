@@ -296,6 +296,7 @@ static void handle_create_state_msg(struct lunatik_controlstate *control_state, 
 */
 static void handle_do_string(struct lunatik_controlstate *controlstate, char *response, struct net *net)
 {
+	bool error;
 	char *state_name;
 	char *fragment;
 	lua_State *L;
@@ -307,6 +308,8 @@ static void handle_do_string(struct lunatik_controlstate *controlstate, char *re
 
 
 	L = controlstate->lua_state;
+
+	error = false;
 
 	if (L == NULL) {
 		create_error_msg(response, "Failed to get control state");
@@ -372,7 +375,11 @@ static void handle_do_string(struct lunatik_controlstate *controlstate, char *re
 	copy_fragment_to_code_buffer(lunatik_state, fragment, fragment_size);
 
 	if (fragment_index == fragment_amount) {
-		luaL_dostring(lunatik_state->L, lunatik_state->code_buffer);
+
+		if (luaL_dostring(lunatik_state->L, lunatik_state->code_buffer) && lua_type(lunatik_state->L, -1) == LUA_TSTRING) {
+			pr_info("%s", lua_tostring(lunatik_state->L, -1));
+			error = true;
+		}
 		
 		release_string(lunatik_state->code_buffer);
 		lunatik_state->buffer_offset = 0;
@@ -380,7 +387,11 @@ static void handle_do_string(struct lunatik_controlstate *controlstate, char *re
 		release_string(fragment);
 		release_string(state_name);
 		
-		sprintf(response, "{ response = 'Code succesfully loaded', operation_success = true }");
+		if (error) 
+			sprintf(response, "{ response = 'Failed to load the code please check the kernel log', operation_success = false }");
+		else 
+			sprintf(response, "{ response = 'Code succesfully loaded', operation_success = true }");
+
 		return;
 	}
 
