@@ -6,12 +6,12 @@ Dependencies
 
 Before proceeding to the installation of Lunatik, you have to install the following packages:
 ```bash
-libnl-3-dev libnl-genl-3-dev liblua5.3-dev lua5.3
+libnl-3-dev libnl-genl-3-dev liblua5.3-dev lua5.3 build-essential
 ```
 
 On Ubuntu this can be done with:
 ```bash
-apt install libnl-3-dev libnl-genl-3-dev liblua5.3-dev lua5.3 -y
+apt install libnl-3-dev libnl-genl-3-dev liblua5.3-dev lua5.3 build-essential -y
 ```
 
 Installation
