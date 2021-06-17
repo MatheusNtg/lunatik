@@ -1,17 +1,7 @@
 local messenger = require'lunatik_messenger'
+local utils = require'utils'
+
 local lunatik = {}
-
-local function get_table_from_string(table_string)
-	return load('return ' .. table_string)()
-end
-
-local function split_text_into_chunks(text, chunk_size)
-	local s = {}
-	for i=1, #text, chunk_size do
-		s[#s+1] = text:sub(i, i + chunk_size - 1)
-	end
-	return s
-end
 
 local LunatikState = {
 	name = "",
@@ -36,7 +26,7 @@ function LunatikState:dostring(code)
 
 	local fragment_size = messenger.constants.LUNATIK_FRAGMENT_SIZE
 
-	local code_chunks = split_text_into_chunks(code, fragment_size)
+	local code_chunks = utils.split_text_into_chunks(code, fragment_size)
 
 	local response_table = nil
 
@@ -59,7 +49,7 @@ function LunatikState:dostring(code)
 			return nil, 'Failed to send msg to kernel'
 		end
 
-		response_table = get_table_from_string( kernel_response )
+		response_table = utils.get_table_from_string( kernel_response )
 
 		if not response_table.operation_success then
 			return nil, response_table.response
@@ -88,7 +78,7 @@ function LunatikState:put()
 	self.curralloc = 0
 	self.maxalloc = 0
 
-	local response_table = get_table_from_string(kernel_response)
+	local response_table = utils.get_table_from_string(kernel_response)
 
 	return response_table.operation_success, response_table.response
 end
@@ -123,7 +113,7 @@ function lunatik.new_state(name, maxalloc)
 		return nil, 'Failed to send message to kernel'
 	end
 
-	local response_table = get_table_from_string(kernel_response)
+	local response_table = utils.get_table_from_string(kernel_response)
 
 	if not response_table.operation_success then
 		return nil, response_table.response
@@ -134,7 +124,6 @@ function lunatik.new_state(name, maxalloc)
 		maxalloc = maxalloc,
 		curralloc = response_table.curr_alloc
 	}
-
 end
 
 function lunatik.get_state(state_name)
@@ -159,7 +148,7 @@ function lunatik.get_state(state_name)
 		return nil, 'Failed to put msg to kernel'
 	end
 
-	local response_table = get_table_from_string(kernel_response)
+	local response_table = utils.get_table_from_string(kernel_response)
 
 	if response_table.operation_success == false then
 		return nil, response_table.response
@@ -170,8 +159,6 @@ function lunatik.get_state(state_name)
 		curralloc = response_table.curr_alloc,
 		maxalloc = response_table.max_alloc
 	}
-
-
 end
 
 function lunatik.list()
@@ -190,7 +177,7 @@ function lunatik.list()
 		return nil, 'Failed to send message to list states to kernel'
 	end
 
-	local response_table = get_table_from_string(kernel_response)
+	local response_table = utils.get_table_from_string(kernel_response)
 
 	local states_amount = response_table.states_amount
 
@@ -209,7 +196,7 @@ function lunatik.list()
 			print('Failed to send msg to get ' .. i .. 'th state')
 		end
 
-		response_table = get_table_from_string(kernel_response)
+		response_table = utils.get_table_from_string(kernel_response)
 
 		if response_table.operation_success == false then
 			print('Failed executing the list states operation')
