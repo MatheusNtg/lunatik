@@ -208,8 +208,8 @@ static char *create_string(size_t len)
 {
 	char *result;
 
-	result = kzalloc(len, GFP_KERNEL);
-
+	result = kzalloc(len + 1, GFP_KERNEL);
+	result[len] = '\0';
 	return result;
 }
 
@@ -371,7 +371,6 @@ static void handle_do_string(struct lunatik_controlstate *controlstate, char *re
 		return;
 	}
 	
-
 	copy_fragment_to_code_buffer(lunatik_state, fragment, fragment_size);
 
 	if (fragment_index == fragment_amount) {
