@@ -1,15 +1,15 @@
 local messenger = require'lunatik_messenger'
 local utils = require'utils'
 
-local lunatik = {}
+local LunatikState = {}
 
-local LunatikState = {
+local LunatikStateMt = {
 	name = "",
-	curralloc = 0,
+	currAlloc = 0,
 	maxalloc = 0
 }
 
-function LunatikState:new (o)
+function LunatikStateMt:new (o)
 
 	o = o or {}
 	setmetatable(o, self)
@@ -18,7 +18,7 @@ function LunatikState:new (o)
 	return o
 end
 
-function LunatikState:dostring(code)
+function LunatikStateMt:dostring(code)
 
 	if type(code) ~= 'string' then
 		return nil, 'code must be string'
@@ -45,6 +45,7 @@ function LunatikState:dostring(code)
 
 		local ok, kernel_response = messenger.send( frag_msg )
 
+		print(frag_msg)
 		if not ok then
 			return nil, 'Failed to send msg to kernel'
 		end
@@ -59,7 +60,7 @@ function LunatikState:dostring(code)
 	return true, response_table.response
 end
 
-function LunatikState:put()
+function LunatikStateMt:put()
 
 	local msg = string.format([[
 		msg = {
@@ -83,7 +84,7 @@ function LunatikState:put()
 	return response_table.operation_success, response_table.response
 end
 
-function lunatik.new_state(name, maxalloc)
+function LunatikState.new_state(name, maxalloc)
 
 	if type(name) ~= 'string' then
 		return nil, 'state name must be a string'
@@ -119,14 +120,14 @@ function lunatik.new_state(name, maxalloc)
 		return nil, response_table.response
 	end
 
-	return true, LunatikState:new{
+	return true, LunatikStateMt:new{
 		name = name,
 		maxalloc = maxalloc,
 		curralloc = response_table.curr_alloc
 	}
 end
 
-function lunatik.get_state(state_name)
+function LunatikState.get_state(state_name)
 	if type(state_name) ~= 'string' then
 		return nil, 'state name must be a string'
 	end
@@ -154,14 +155,14 @@ function lunatik.get_state(state_name)
 		return nil, response_table.response
 	end
 
-	return true, LunatikState:new{
+	return true, LunatikStateMt:new{
 		name = response_table.state_name,
 		curralloc = response_table.curr_alloc,
 		maxalloc = response_table.max_alloc
 	}
 end
 
-function lunatik.list()
+function LunatikState.list()
 	local result = {}
 
 	local msg = string.format([[
@@ -207,7 +208,6 @@ function lunatik.list()
 	end
 
 	return result
-
 end
 
-return lunatik
+return LunatikState
