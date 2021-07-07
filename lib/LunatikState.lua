@@ -32,7 +32,7 @@ function LunatikStateMt:dostring(code)
 
 	for k, v in pairs(code_chunks) do
 		local frag_msg = string.format([[
-			msg = {
+			{
 				name = %q,
 				code_size = %d,
 				fragment = %q,
@@ -63,7 +63,7 @@ end
 function LunatikStateMt:put()
 
 	local msg = string.format([[
-		msg = {
+		{
 			name = %q,
 			operation = %d
 		}
@@ -101,7 +101,7 @@ function LunatikState.new_state(name, maxalloc)
 	end
 
 	local msg = string.format([[
-		msg = {
+		{
 			operation = %d,
 			name = %q,
 			maxalloc = %d
@@ -137,7 +137,7 @@ function LunatikState.get_state(state_name)
 	end
 
 	local msg = string.format([[
-		msg = {
+		{
 			state_name = %q,
 			operation = %d
 		}
@@ -166,7 +166,7 @@ function LunatikState.list()
 	local result = {}
 
 	local msg = string.format([[
-		msg = {
+		{
 			init = true,
 			operation = %d
 		}
@@ -184,7 +184,7 @@ function LunatikState.list()
 
 	for i = 0, states_amount - 1 do
 		msg = string.format( [[
-			msg = {
+			{
 				curr_state_to_get = %d,
 				init = false,
 				operation = %d

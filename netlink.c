@@ -124,7 +124,7 @@ static void create_error_msg(char *buffer, char *msg)
 	}
 }
 
-static int run_safe_code_on_control_state(struct lunatik_controlstate *control_state, char *code)
+static int run_code_safelly_on_control_state(struct lunatik_controlstate *control_state, char *code)
 {
 	lua_State *L = control_state->lua_state;
 	
@@ -148,9 +148,14 @@ static int get_int_from_control_state(struct lunatik_controlstate *control_state
 
 	if (L == NULL) return -EPERM;
 
-	/* First get the global table named msg */
-	if(lua_getglobal(L, "msg") != LUA_TTABLE) {
-		return -EINVAL;
+	if (lua_gettop(L) == 0) {
+		pr_err("the control states stack is empty for request %s\n", __func__);
+		return -EPROTO;
+	}
+
+	if (!lua_istable(L, -1)) {
+		pr_err("there is no table loaded on control state for request %s\n", __func__);
+		return -EPROTO;
 	}
 
 	if(lua_getfield (L, -1, attr_name) != LUA_INT_TYPE) {
@@ -158,6 +163,8 @@ static int get_int_from_control_state(struct lunatik_controlstate *control_state
 	}
 
 	*integer = lua_tointeger(L, -1);
+
+	lua_settop(L, -2);
 
 	return 0;
 }
@@ -169,9 +176,14 @@ static int get_string_from_control_state(struct lunatik_controlstate *control_st
 
 	if (L == NULL || string == NULL) return -EPERM;
 
-	/* First get the global table named msg */
-	if(lua_getglobal(L, "msg") != LUA_TTABLE) {
-		return -EINVAL;
+	if (lua_gettop(L) == 0) {
+		pr_err("the control state stack is empty for request %s\n", __func__);
+		return -EPROTO;
+	}
+
+	if (!lua_istable(L, -1)) {
+		pr_err("there is no table loaded on control state for request %s\n", __func__);
+		return -EPROTO;
 	}
 
 	if(lua_getfield(L, -1, attr_name) != LUA_TSTRING) {
@@ -180,6 +192,8 @@ static int get_string_from_control_state(struct lunatik_controlstate *control_st
 
 	tmp_string = lua_tostring(L, -1);
 	memcpy(string, tmp_string, strlen(tmp_string));
+
+	lua_settop(L, -2);
 
 	return 0;
 }
@@ -190,9 +204,14 @@ static int get_bool_from_control_state(struct lunatik_controlstate *controlstate
 
 	if (L == NULL) return -EPERM;
 
-	/* First get the global table named msg */
-	if(lua_getglobal(L, "msg") != LUA_TTABLE) {
-		return -EINVAL;
+	if (lua_gettop(L) == 0) {
+		pr_err("the control state stack is empty for request %s\n", __func__);
+		return -EPROTO;
+	}
+
+	if (!lua_istable(L, -1)) {
+		pr_err("there is no table loaded on control state for request %s\n", __func__);
+		return -EPROTO;
 	}
 
 	if(lua_getfield(L, -1, attr_name) != LUA_TBOOLEAN) {
@@ -200,6 +219,8 @@ static int get_bool_from_control_state(struct lunatik_controlstate *controlstate
 	}
 
 	*boolean = lua_toboolean(L, -1);
+
+	lua_settop(L, -2);
 
 	return 0;
 }
@@ -267,8 +288,7 @@ static void handle_create_state_msg(struct lunatik_controlstate *control_state, 
 		get_int_from_control_state(control_state, "maxalloc", &max_alloc)
 	) {
 		create_error_msg(response, "Failed to get state informations");
-		kfree(state_name);
-		state_name = NULL;
+		release_string(state_name);
 		return;
 	}
 
@@ -276,15 +296,13 @@ static void handle_create_state_msg(struct lunatik_controlstate *control_state, 
 
 	if (state == NULL) {
 		create_error_msg(response, "Failed to create state");
-		kfree(state_name);
-		state_name = NULL;
+		release_string(state_name);
 		return;
 	}
 
 	sprintf(response, "{ response = 'State %s successfully created', curr_alloc = %lu, operation_success = true }", 
 								  state_name, state->curralloc);
-	kfree(state_name);
-	state_name = NULL;
+	release_string(state_name);
 
 	return;
 }
@@ -551,22 +569,29 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 	struct lunatik_controlstate *control_state;
 	char response_msg[LUNATIK_FRAGMENT_SIZE];
 	char *msg_payload;
+	char *code_to_load;
 	lua_Integer op_number;
+	lua_Integer maxalloc;
 
 	control_state = &lunatik_pernet(genl_info_net(info))->control_state;
 	msg_payload = (char *)nla_data(info->attrs[USER_SPACE_MSG]);
+
+	code_to_load = create_string(strlen("return ") + strlen(msg_payload));
+	sprintf(code_to_load, "return %s", msg_payload);
 
 	op_number = 0;
 
 	lua_settop(control_state->lua_state, 0);
 
-	if (run_safe_code_on_control_state(control_state, msg_payload)) {
+	if (run_code_safelly_on_control_state(control_state, code_to_load)) {
 		send_msg_to_userspace("{ response = 'Failed to load the table on kernel', operation_success = false }", info);
+		release_string(code_to_load);
 		return 0;
 	}
 
 	if (get_int_from_control_state(control_state, "operation", &op_number)) {
 		send_msg_to_userspace("{ response = 'Failed to get operation on the received table', operation_success = false }", info);
+		release_string(code_to_load);
 		return 0;
 	}
 
@@ -591,9 +616,8 @@ static int lunatikN_handletablemsg(struct sk_buff *buff, struct genl_info *info)
 		break;
 	}
 
-	lua_gc(control_state->lua_state, LUA_GCCOLLECT, 0);
-
 	send_msg_to_userspace(response_msg, info);
+	release_string(code_to_load);
 
 	return 0;
 }
